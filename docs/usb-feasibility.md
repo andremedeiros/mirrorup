@@ -17,7 +17,7 @@ Test system: macOS 27.2 (build 26B123, Apple Silicon), Xcode 27.2 / Swift 6.4.2,
 | ImageCaptureCore `requestSendPTPCommand` | **Yes** — shipped default | Full PTP pass-through, vendor opcodes included; 29.8 fps live view measured. |
 | DriverKit (`USBDriverKit`) | Not pursued | Needs a system extension, a DriverKit entitlement from Apple, and replaces the system's PTP driver for the device. Far more complexity than the requirements justify, given ImageCaptureCore works. |
 
-**Decision:** Mirrorup talks PTP through ImageCaptureCore by default (`CanonBackendFactory.Transport.imageCapture`).
+**Decision:** Mirrorup talks PTP through ImageCaptureCore by default (`CameraTransport.imageCapture`, used by `CameraRegistry.makeBackend()`).
 The native Swift PTP stack (container framing, transaction IDs, session handling) is shared by both
 transports; the direct IOUSBHost transport (`.usb`) is kept, tested with fakes, and usable whenever
 the interface is unclaimed. It is never the default and Mirrorup never terminates system daemons to

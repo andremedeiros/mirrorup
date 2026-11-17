@@ -78,12 +78,21 @@ public final class FrameDecoder {
         guard let dimensions = JPEGInfo.dimensions(of: frame.jpeg) else {
             throw CameraError(.invalidFrame, "The camera sent an unreadable frame.", detail: "No JPEG SOF marker in \(frame.jpeg.count) bytes")
         }
-        let stage = enhance && Self.isEnhanceSupported
+        let wantsEnhance = enhance && Self.isEnhanceSupported
+        // A build finished after Enhance was turned off would otherwise keep its model loaded.
+        if !wantsEnhance { pendingBuild = nil }
+        let stage = wantsEnhance
             ? enhancerForCrop(Self.outputAspectCrop(width: dimensions.width, height: dimensions.height, output: output))
             : nil
         if sourceSize?.width != dimensions.width || sourceSize?.height != dimensions.height || session == nil
             || stage !== enhancer {
-            try makeSession(width: dimensions.width, height: dimensions.height, enhancer: stage)
+            do {
+                try makeSession(width: dimensions.width, height: dimensions.height, enhancer: stage)
+            } catch {
+                // Never rebuild a scaler the session can't decode for: stay on plain scaling.
+                if let stage { rejectedCrop = stage.crop }
+                throw error
+            }
         }
         guard let session, let formatDescription else {
             throw CameraError(.invalidFrame, "The video decoder is unavailable.", detail: "No decompression session")
@@ -133,7 +142,21 @@ public final class FrameDecoder {
             return imageBuffer
         }
 
-        let scaledBuffer = try enhancer?.enhance(decodedBuffer) ?? decodedBuffer
+        let scaledBuffer: CVPixelBuffer
+        if let enhancer {
+            do {
+                scaledBuffer = try enhancer.enhance(decodedBuffer)
+            } catch {
+                // A scaler that fails once is dropped for this crop; the next frame decodes plainly
+                // instead of every frame failing until the user turns Enhance off.
+                rejectedCrop = enhancer.crop
+                invalidateSession()
+                Diagnostics.capture.error("Enhance failed; using plain scaling: \(error.description, privacy: .public)")
+                throw error
+            }
+        } else {
+            scaledBuffer = decodedBuffer
+        }
 
         let pixelBuffer: CVPixelBuffer
         if orientation == .normal {
@@ -412,9 +435,9 @@ private final class FrameEnhancer: @unchecked Sendable {
         Diagnostics.capture.info("Enhance stage released")
     }
 
-    /// Runs on the capture loop's thread, which already blocks on the hardware decoder. Measured on an
-    /// M1 Pro with SL2 frames: ~9 ms for the scaler (960×540 → 1440×810) plus ~2.3 ms to scale down
-    /// (benchmarks/sl2-30s-imagecapture-enhance.json).
+    /// Runs on the capture loop's thread, which already blocks on the hardware decoder. On an M1 Pro
+    /// with SL2 stills frames the whole decode stage goes from p50 5.5 ms to 17.6 ms
+    /// (benchmarks/sl2-fw110-60s-imagecapture-stills-enhance.json vs …-30s-…-stills-plain.json).
     func enhance(_ source: CVPixelBuffer) throws(CameraError) -> CVPixelBuffer {
         var scaled: CVPixelBuffer?
         var status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, scaledPool, &scaled)

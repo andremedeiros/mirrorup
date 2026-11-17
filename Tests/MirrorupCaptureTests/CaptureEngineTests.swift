@@ -377,3 +377,49 @@ struct CaptureEngineTests {
         #expect(value == 7)
     }
 }
+
+/// Streams synthetic frames, then holds them back for `pause` while reporting `lastFramePause`
+/// (a camera taking a photo), then streams again. Like a real photo, the pause is a window in time
+/// that a cancelled `nextFrame` does not end.
+private actor PausingCamera: CameraBackend {
+    private let camera = SyntheticCamera(configuration: syntheticConfiguration())
+    private let pause: Duration
+    private var served = 0
+    private var pauseEnds: ContinuousClock.Instant?
+
+    init(pause: Duration) { self.pause = pause }
+
+    var identity: CameraIdentity { CameraIdentity(name: "Pausing", transport: "Synthetic") }
+    private var isPausingFrames: Bool { pauseEnds.map { ContinuousClock.now < $0 } ?? false }
+    var lastFramePause: ContinuousClock.Instant? { pauseEnds.map { min($0, .now) } }
+    func connect() async throws(CameraError) { try await camera.connect() }
+    func startLiveView() async throws(CameraError) { try await camera.startLiveView() }
+    func nextFrame() async throws(CameraError) -> CameraFrame {
+        served += 1
+        if served == 3 { pauseEnds = .now + pause }
+        while isPausingFrames {
+            if Task.isCancelled { throw .cancellation }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return try await camera.nextFrame()
+    }
+    func stopLiveView() async throws(CameraError) { try await camera.stopLiveView() }
+    func disconnect() async { await camera.disconnect() }
+    func metadata() async -> CameraMetadata { CameraMetadata() }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct FramePauseTests {
+    @Test func aDeliberateFramePauseLongerThanTheStallTimeoutDoesNotReconnect() async throws {
+        let engine = CaptureEngine(configuration: testConfiguration(stallTimeout: .milliseconds(300))) {
+            PausingCamera(pause: .milliseconds(900))
+        }
+        await engine.start()
+        _ = try await waitForStatus(engine, timeout: .seconds(10), "frames after the pause") {
+            $0.state == .streaming && $0.metrics.framesDecoded >= 6
+        }
+        let status = await engine.status
+        #expect(status.reconnectCount == 0 && status.metrics.recoveryAttempts == 0, "\(status.lastRecoverableError.map { "\($0)" } ?? "none")")
+        await engine.stop()
+    }
+}

@@ -78,8 +78,8 @@ public struct DiscoveredCamera: Sendable, CustomStringConvertible {
         }
         switch handle {
         case .imageCapture(let device):
-            let transport = await MainActor.run { UncheckedTransport(ImageCapturePTPTransport(camera: device)) }
-            return PTPSession(transport: transport.value, defaultTimeout: commandTimeout)
+            let transport = await MainActor.run { ImageCapturePTPTransport(camera: device) }
+            return PTPSession(transport: transport, defaultTimeout: commandTimeout)
         case .usb(let device):
             do {
                 return PTPSession(transport: try USBPTPConnection.open(device), defaultTimeout: commandTimeout)
@@ -100,12 +100,6 @@ public struct DiscoveredCamera: Sendable, CustomStringConvertible {
             throw CameraError(.notFound, "This camera is not attached.", detail: "\(description) is a placeholder")
         }
     }
-}
-
-/// ImageCapturePTPTransport is `@unchecked Sendable` already; this only carries it out of `MainActor.run`.
-private struct UncheckedTransport: @unchecked Sendable {
-    let value: ImageCapturePTPTransport
-    init(_ value: ImageCapturePTPTransport) { self.value = value }
 }
 
 /// Camera makers by USB vendor ID, for naming devices before any driver has talked to them.

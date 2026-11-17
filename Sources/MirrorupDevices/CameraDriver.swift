@@ -50,7 +50,8 @@ public struct CameraRegistry: Sendable {
         drivers.first { $0.supports(camera) }
     }
 
-    /// The first attached camera some driver supports, on `transport`, waiting up to `timeout`.
+    /// The first attached camera some driver supports, on `transport` (waiting up to `timeout` on
+    /// ImageCaptureCore; see `CameraDiscovery.firstCamera`).
     public func firstSupportedCamera(on transport: CameraTransport = .imageCapture, timeout: Duration = .seconds(3))
         async -> (camera: DiscoveredCamera, driver: any CameraDriver)? {
         let drivers = drivers
@@ -80,9 +81,13 @@ public struct CameraRegistry: Sendable {
     /// The not-found error for a discovery that matched no driver.
     static func notFound(unsupported: [DiscoveredCamera], drivers: [any CameraDriver]) -> CameraError {
         let supported = drivers.map(\.name).joined(separator: ", ")
-        guard let camera = unsupported.first else {
+        // Image Capture also reports phones and scanners, and camera makers' USB IDs also cover their
+        // printers and game controllers: only name something that looks like a camera.
+        let camera = unsupported.first { $0.acceptsPTP && $0.vendorName != nil } ?? unsupported.first { $0.vendorName != nil && !$0.acceptsPTP }
+        guard let camera else {
+            let seen = unsupported.isEmpty ? "no attached devices" : "attached, not cameras: \(unsupported.map(\.description).joined(separator: "; "))"
             return CameraError(.notFound, "No camera found. Connect your camera with a USB cable and turn it on.",
-                               detail: "no attached cameras; drivers: \(supported)")
+                               detail: "\(seen); drivers: \(supported)")
         }
         let detail = "attached: \(unsupported.map(\.description).joined(separator: "; ")); drivers: \(supported)"
         if !camera.acceptsPTP {

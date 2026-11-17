@@ -209,7 +209,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
     @Test func zoomPositionsThenMagnifies() async throws {
         let (camera, sim) = try await streaming()
         _ = try await camera.set(.autofocusMethod, to: 1)
-        _ = try await camera.setZoom(CameraZoom(5), center: CGPoint(x: 0.25, y: 0.5))
+        _ = try await camera.setZoom(CameraZoom(value: 5, title: "5×"), center: CGPoint(x: 0.25, y: 0.5))
         let commands = sim.state.withLock { $0.commands }.filter { $0.0 == 0x9159 || $0.0 == 0x9158 }
         // Nothing streams here, so no frame contradicts the camera's OK: each command is sent once.
         #expect(commands.map(\.0) == [0x9159, 0x9158])
@@ -224,7 +224,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         let frames = Task { while !Task.isCancelled { _ = try? await camera.nextFrame(); try? await Task.sleep(for: .milliseconds(5)) } }
         defer { frames.cancel() }
         do {
-            _ = try await camera.setZoom(CameraZoom(5), center: nil)
+            _ = try await camera.setZoom(CameraZoom(value: 5, title: "5×"), center: nil)
             Issue.record("expected an error")
         } catch {
             #expect(error.message == "The camera did not change the zoom. Try again in a moment.")
@@ -235,10 +235,10 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
     @Test func onePointAFOffersOneAndFiveTimesZoomAndRefusesOthersWithoutSending() async throws {
         let (camera, sim) = try await streaming()
         let state = try await camera.set(.autofocusMethod, to: 1)
-        #expect(state.zoomLevels == [.x1, CameraZoom(5)])
+        #expect(state.zoomLevels == [.x1, CameraZoom(value: 5, title: "5×")])
         #expect(state.zoom == .x1)
         do {
-            _ = try await camera.setZoom(CameraZoom(10), center: nil)
+            _ = try await camera.setZoom(CameraZoom(value: 10, title: "10×"), center: nil)
             Issue.record("expected an error")
         } catch {
             #expect(error.message == "The camera can't zoom to 10×.")
@@ -248,7 +248,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
 
     @Test func zoomIsRefusedInFaceTrackingWithoutSending() async throws {
         let (camera, sim) = try await streaming()
-        await #expect(throws: CameraError.self) { _ = try await camera.setZoom(CameraZoom(5), center: nil) }
+        await #expect(throws: CameraError.self) { _ = try await camera.setZoom(CameraZoom(value: 5, title: "5×"), center: nil) }
         #expect(!sim.state.withLock { $0.log.contains(0x9158) })
     }
 

@@ -50,8 +50,11 @@ public struct CameraError: Error, Sendable, Equatable, CustomStringConvertible {
         case accessDenied
         /// A camera operation exceeded its deadline.
         case timeout
-        /// The camera refused or cannot enter live view (mode dial, menu, unsupported model).
+        /// The camera refused or cannot enter live view right now (mode dial, menu); retrying can work.
         case liveViewUnavailable
+        /// The camera is attached but this driver can't stream from it (a model without live view over
+        /// USB). Retrying cannot help, so the engine stops.
+        case unsupported
         /// The camera answered with data or codes we do not understand.
         case protocolViolation
         /// One frame was malformed; the session itself is still healthy.
@@ -93,7 +96,7 @@ public struct CameraError: Error, Sendable, Equatable, CustomStringConvertible {
         case .invalidFrame: .skipFrame
         case .timeout, .protocolViolation, .liveViewUnavailable: .reconnect
         case .notFound, .disconnected, .inUseByAnotherApplication: .waitForDevice
-        case .accessDenied: .fatal
+        case .accessDenied, .unsupported: .fatal
         case .cancelled: .stop
         }
     }
@@ -118,6 +121,15 @@ public protocol CameraBackend: Sendable {
     /// frame. Reflects the latest state the camera has reported. Formatting is done here, on demand,
     /// never on the capture path: call it when a user asks, not on a timer.
     func metadata() async -> CameraMetadata
+
+    /// When the backend last held frames back on purpose (e.g. while the shutter fires and the file
+    /// downloads): `.now` during such a pause, the instant it ended afterwards, nil if it never paused.
+    /// The engine's stall watchdog counts from the end of a pause, so a photo is not a stall.
+    var lastFramePause: ContinuousClock.Instant? { get async }
+}
+
+extension CameraBackend {
+    public var lastFramePause: ContinuousClock.Instant? { get async { nil } }
 }
 
 /// A decoded frame ready for display or publication. Pixel buffers are IOSurface-backed so they can

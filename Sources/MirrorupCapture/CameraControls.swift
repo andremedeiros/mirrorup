@@ -58,18 +58,21 @@ public struct CameraSettingState: Sendable, Equatable {
 
 /// Live-view magnification. Zoom crops the sensor (sharper than digital zoom) and changes the
 /// stream's field of view. Which factors exist is up to the camera (`CameraControlState.zoomLevels`).
-public struct CameraZoom: Sendable, Hashable, Codable, Comparable, CustomStringConvertible {
-    public let factor: Int
+public struct CameraZoom: Sendable, Hashable, Codable, CustomStringConvertible {
+    /// The camera's own code for this magnification (what the driver sends), e.g. Canon's 5.
+    public let value: UInt32
+    /// How it reads to people: "5×", "5.9×".
+    public let title: String
 
-    public init(_ factor: Int) {
-        self.factor = factor
+    public init(value: UInt32, title: String) {
+        self.value = value
+        self.title = title
     }
 
-    public static let x1 = CameraZoom(1)
+    /// No magnification; drivers use value 1 for it, as PTP vendors do.
+    public static let x1 = CameraZoom(value: 1, title: "1×")
 
-    public var title: String { "\(factor)×" }
     public var description: String { title }
-    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.factor < rhs.factor }
 }
 
 /// How an autofocus attempt ended, as reported by the camera's live-view AF frame.

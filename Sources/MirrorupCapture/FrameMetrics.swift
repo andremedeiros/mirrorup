@@ -14,7 +14,7 @@ public struct FrameMetrics: Sendable {
         public var deliveredFPS: Double
         /// Milliseconds from frame request to last byte received.
         public var acquisition: SampleWindow.Summary?
-        /// Milliseconds spent decoding and scaling.
+        /// Milliseconds from JPEG to published buffer: decode, scaling or enhance, and orientation.
         public var decode: SampleWindow.Summary?
         /// Milliseconds from capture (last byte received) to hand-off to the consumer's sink.
         public var frameAgeAtDelivery: SampleWindow.Summary?

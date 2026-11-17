@@ -10,11 +10,6 @@ enum CameraSource: String, CaseIterable, Identifiable, Sendable {
 
     var id: Self { self }
 
-    /// Reads a stored value, including the pre-driver name of `.camera` ("canon").
-    init?(storedValue: String) {
-        self.init(rawValue: storedValue == "canon" ? Self.camera.rawValue : storedValue)
-    }
-
     func makeBackend() async throws(CameraError) -> any CameraBackend {
         switch self {
         case .camera: try await CameraRegistry.builtIn.makeBackend()

@@ -60,6 +60,8 @@ struct DiagnosticsView: View {
             }
         }
         .frame(minWidth: 460, minHeight: 520)
+        // CPU, memory and sink counters are sampled only while this window is open.
+        .task { await model.monitorResources() }
     }
 
     private func stateDescription(_ state: CaptureState) -> String {
@@ -88,6 +90,7 @@ struct DiagnosticsView: View {
         panel.nameFieldStringValue = "Mirrorup Diagnostics \(Date().formatted(.iso8601.year().month().day())).txt"
         NSApp.activate()
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.refreshSystemPermissions()
 
         var snapshot = DiagnosticsReport.Snapshot(
             wantsStreaming: model.wantsStreaming,

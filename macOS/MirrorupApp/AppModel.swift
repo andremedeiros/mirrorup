@@ -62,8 +62,8 @@ final class AppModel {
     private(set) var cameraInfoRevision = 0
     private(set) var cameraInfoReadAt: Date?
     private(set) var isReadingCameraInfo = false
-    /// One line for the popover, e.g. "EF-S18-55mm f/4-5.6 IS STM · f/5.6 · 1/60 s · ISO 400",
-    /// derived when camera info is read (never per frame).
+    /// One line for the popover: shooting mode and lens (`summary(_:)`), derived when camera info is
+    /// read (never per frame).
     private(set) var cameraSummary: String?
 
     /// Camera controls as of the last read (popover opened, or after a change). Never polled.
@@ -136,7 +136,7 @@ final class AppModel {
     init() {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Keys.autoStart: true])
-        let source = defaults.string(forKey: Keys.source).flatMap(CameraSource.init(storedValue:)) ?? .camera
+        let source = defaults.string(forKey: Keys.source).flatMap(CameraSource.init(rawValue:)) ?? .camera
         self.source = source
         autoStartStreaming = defaults.bool(forKey: Keys.autoStart)
         mirrored = defaults.bool(forKey: Keys.mirrored)
@@ -160,6 +160,13 @@ final class AppModel {
     }
 
     // MARK: Lifecycle
+
+    /// Re-reads permissions the user can change in System Settings while Mirrorup runs. Called when
+    /// the popover or Settings opens; macOS sends no notification for either.
+    func refreshSystemPermissions() {
+        cameraAccess = AVCaptureDevice.authorizationStatus(for: .video)
+        loginItemStatus = SMAppService.mainApp.status
+    }
 
     private func launch() async {
         let source = source.rawValue
@@ -195,14 +202,24 @@ final class AppModel {
         enqueueTransition(stop: !on, start: on)
     }
 
+    /// The source of the engine run in progress; nil while stopping or stopped. Statuses from a run
+    /// being torn down still arrive after `source` changes, so the camera's name is only remembered
+    /// from a run that really is the camera.
+    @ObservationIgnored private var runningSource: CameraSource?
+
     /// Serializes engine start/stop so rapid toggles and source changes apply in order.
     private func enqueueTransition(stop: Bool, start: Bool) {
         let previous = transition
         let engine = engine
+        let sourceBox = sourceBox
+        runningSource = nil
         transition = Task {
             await previous?.value
             if stop { await engine.stop() }
-            if start { await engine.start() }
+            if start {
+                runningSource = sourceBox.withLock { $0 }
+                await engine.start()
+            }
         }
     }
 
@@ -231,22 +248,25 @@ final class AppModel {
             await Self.forwardFrames(engine: engine, sink: sink, preview: preview)
         })
 
-        backgroundTasks.append(Task { [weak self] in
-            var previous = ProcessResources.snapshot()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self else { return }
-                let current = ProcessResources.snapshot()
-                if let previous, let current {
-                    resources = ResourceUsage(
-                        cpuPercent: ProcessResources.cpuUsage(from: previous, to: current) * 100,
-                        memoryBytes: current.physicalFootprint
-                    )
-                }
-                previous = current
-                sinkCounters = sink.counterSnapshot
+    }
+
+    /// Samples CPU, memory and sink counters once a second for as long as the caller (the Diagnostics
+    /// window's `.task`) runs; nothing samples while no one is looking.
+    func monitorResources() async {
+        var previous = ProcessResources.snapshot()
+        sinkCounters = sink.counterSnapshot
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            let current = ProcessResources.snapshot()
+            if let previous, let current {
+                resources = ResourceUsage(
+                    cpuPercent: ProcessResources.cpuUsage(from: previous, to: current) * 100,
+                    memoryBytes: current.physicalFootprint
+                )
             }
-        })
+            previous = current
+            sinkCounters = sink.counterSnapshot
+        }
     }
 
     /// Hands every new frame to the virtual camera and the preview. Runs off the main actor; never
@@ -298,10 +318,11 @@ final class AppModel {
     }
 
     /// Picker binding: `$model[setting: .aperture]`. Writing a value the camera offers applies it.
-    subscript(setting setting: CameraSetting) -> UInt32 {
-        get { controlState?.settings[setting]?.current?.value ?? 0 }
+    subscript(setting setting: CameraSetting) -> UInt32? {
+        get { controlState?.settings[setting]?.current?.value }
         set {
-            guard let option = controlState?.settings[setting]?.options.first(where: { $0.value == newValue }),
+            guard let newValue,
+                  let option = controlState?.settings[setting]?.options.first(where: { $0.value == newValue }),
                   option.value != controlState?.settings[setting]?.current?.value
             else { return }
             set(setting, to: option)
@@ -372,7 +393,7 @@ final class AppModel {
     func capturePhoto() {
         runControl("take photo") { controls in
             let photo = try await controls.capturePhoto()
-            let url = try Self.savePhoto(photo)
+            let url = try await Self.savePhoto(photo)
             let message = ControlMessage(kind: .success, text: "Saved \(url.lastPathComponent)", fileURL: url)
             self.controlMessage = message
             // Success is news, not state: clear it after a while unless something replaced it.
@@ -428,8 +449,9 @@ final class AppModel {
         return p
     }
 
-    /// Saves into ~/Pictures/Mirrorup, never overwriting an existing file.
-    private static func savePhoto(_ photo: CapturedPhoto) throws -> URL {
+    /// Saves into ~/Pictures/Mirrorup, never overwriting an existing file. Off the main actor: a
+    /// full-resolution file is several megabytes.
+    @concurrent nonisolated private static func savePhoto(_ photo: CapturedPhoto) async throws -> URL {
         let folder = URL.picturesDirectory.appending(path: "Mirrorup", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let name = (photo.filename as NSString).deletingPathExtension
@@ -444,7 +466,7 @@ final class AppModel {
         return url
     }
 
-    /// The popover's subtitle: shooting mode and lens ("P · EF-S18-55mm f/4-5.6 IS STM").
+    /// The popover's subtitle: shooting mode and lens ("P · 18-55mm").
     private static func summary(_ info: CameraMetadata) -> String? {
         // Shooting mode as on the dial, then the lens, which may truncate. Drivers write explained
         // values as "P (Program AE)"; the part before the parenthesis is what the dial says.
@@ -462,6 +484,16 @@ final class AppModel {
         case streaming = "video"
         case failed = "exclamationmark.triangle"
         case working = "video.badge.ellipsis"
+
+        var accessibilityValue: String {
+            switch self {
+            case .stopped: "Off"
+            case .streamingToVirtualCamera: "Live on Mirrorup Camera"
+            case .streaming: "Live"
+            case .failed: "Problem"
+            case .working: "Connecting"
+            }
+        }
     }
 
     /// Stored and assigned only on change: the menu-bar label must not observe `status`, which is
@@ -515,13 +547,15 @@ final class AppModel {
         let wasLive = phase == .live
         phase = newPhase
         cameraName = status.camera?.name
-        if source == .camera, let name = cameraName, name != lastCameraName {
+        if runningSource == .camera, let name = cameraName, name != lastCameraName {
             lastCameraName = name
             UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
         }
         isVirtualCameraAvailable = sinkState == .connected
         if newPhase != .live { controlState = nil }
         if newPhase == .live && !wasLive {
+            // A failure from the previous connection says nothing about this one.
+            controlMessage = nil
             // Once per connection, so the popover is ready; never on a timer.
             Task {
                 await refreshCameraInfo()

@@ -26,7 +26,8 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 - Swift 6 language mode, strict concurrency, no warnings (`make build` uses `-warnings-as-errors`).
 - No third-party dependencies, no libgphoto2/Rust/C transport code, no private Apple API.
 - Vendor opcodes, wording and quirks stay in the driver module (`MirrorupCanon`, …); `MirrorupPTP`,
-  `MirrorupCapture`, `MirrorupDevices`, the app and the CLI never name a maker. Backends phrase
+  `MirrorupCapture`, `MirrorupDevices`, the app and the CLI contain no vendor logic and no vendor
+  wording shown to users (doc comments may cite makers as examples). Backends phrase
   user-facing hints and errors in the camera's own terms (`CameraControlState.hint`,
   `CameraSettingState.title`, `CameraError.message`); the app shows them as is.
 - Drivers never depend on each other; `MirrorupCameras` is the only place listing them.

@@ -50,6 +50,11 @@ private struct FakeDriver: CameraDriver {
         #expect(unsupported.message == "Mirrorup doesn't support Nikon Z 6 yet. It works with: Canon EOS.")
         #expect(unsupported.detail?.contains("04B0:0000") == true)
 
+        // Image Capture also lists phones; an unknown maker's device is never named as "the camera".
+        let phone = DiscoveredCamera.placeholder(name: "André's iPhone", usbVendorID: 0x05AC, acceptsPTP: false)
+        #expect(CameraRegistry.notFound(unsupported: [phone], drivers: drivers).message == none.message)
+        #expect(CameraRegistry.notFound(unsupported: [phone, nikon], drivers: drivers).message.contains("Nikon Z 6"))
+
         let noPTP = CameraRegistry.notFound(
             unsupported: [.placeholder(name: "Sony ILCE-7M3", usbVendorID: 0x054C, acceptsPTP: false)], drivers: drivers)
         #expect(noPTP.message.hasPrefix("Sony ILCE-7M3 doesn't offer a PTP connection."))

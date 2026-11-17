@@ -25,7 +25,7 @@ cli:
 test:
 	swift test $(SWIFT_FLAGS)
 
-## Opt-in tests against a connected Canon camera (see docs/development.md)
+## Opt-in tests against a connected, supported camera (see docs/development.md)
 test-hardware:
 	MIRRORUP_HARDWARE_TESTS=1 swift test --filter MirrorupIntegrationTests.Hardware
 

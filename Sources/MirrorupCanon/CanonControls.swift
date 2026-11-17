@@ -139,7 +139,7 @@ extension CanonCamera: CameraControlling {
 
     /// Live-view magnifications: 1× and 5×. No 10×: the SL2 sends the same image at 10× as at 5× over
     /// USB (verified), so it would add nothing.
-    static let zoom5 = CameraZoom(5)
+    static let zoom5 = CameraZoom(value: 5, title: "5×")
     static let zoomLevels = [CameraZoom.x1, zoom5]
 
     /// What to change on the camera to unlock more: exposure controls need a creative-zone mode;
@@ -353,7 +353,7 @@ extension CanonCamera: CameraControlling {
             throw CameraError(.protocolViolation, "The camera can't zoom to \(zoom.title).",
                               detail: "offered: \(Self.zoomLevels.map(\.title).joined(separator: ", "))")
         }
-        let factor = UInt32(zoom.factor)
+        let factor = zoom.value
         do {
             // Position first (it moves the magnifier the zoom opens on, at the current magnifier size),
             // then magnify; the magnified view is centred on the magnifier.

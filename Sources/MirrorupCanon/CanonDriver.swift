@@ -3,8 +3,8 @@ public import MirrorupDevices
 public import MirrorupPTP
 
 /// Canon EOS cameras over PTP (validated: EOS Rebel SL2 / 200D). Claims every Canon USB device that
-/// offers PTP; bodies without EOS live view fail at `startLiveView` with a clear error rather than
-/// being hidden.
+/// offers PTP; bodies without EOS live view fail in `connect()` with `.unsupported`, naming the
+/// model, rather than being hidden.
 public struct CanonDriver: CameraDriver {
     public static let usbVendorID: UInt16 = 0x04A9
 
@@ -25,7 +25,7 @@ public struct CanonDriver: CameraDriver {
         try await makeCamera(for: camera)
     }
 
-    /// The concrete backend, for tools that need Canon-only diagnostics (`pollStatistics`).
+    /// The concrete backend, for tests and tools that need `CanonCamera` itself.
     public func makeCamera(for camera: DiscoveredCamera) async throws(CameraError) -> CanonCamera {
         let session = try await camera.openPTPSession(commandTimeout: options.commandTimeout)
         return CanonCamera(session: session, identity: camera.identity, options: options)

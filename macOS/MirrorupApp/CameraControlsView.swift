@@ -92,12 +92,19 @@ private struct RowLabel: View {
     }
 }
 
-/// Discrete exposure-compensation steps; applied when the user lets go, not on every step.
+/// Discrete exposure-compensation steps; applied when the user lets go, not on every step. The
+/// position follows the camera's value except while dragging, so a refused change snaps back.
 private struct BrightnessSlider: View {
     let model: AppModel
     let options: [CameraSettingOption]
     let current: CameraSettingOption?
-    @State private var index = 0.0
+    @State private var dragIndex: Double?
+
+    private var currentIndex: Double {
+        Double(options.firstIndex { $0.value == current?.value } ?? options.count / 2)
+    }
+
+    private var index: Double { dragIndex ?? currentIndex }
 
     private var title: String {
         options.indices.contains(Int(index)) ? options[Int(index)].title : "–"
@@ -105,9 +112,13 @@ private struct BrightnessSlider: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Slider(value: $index, in: 0...Double(max(options.count - 1, 1)), step: 1) { editing in
-                guard !editing, options.indices.contains(Int(index)) else { return }
-                model.set(.exposureCompensation, to: options[Int(index)])
+            Slider(value: Binding(get: { index }, set: { dragIndex = $0 }),
+                   in: 0...Double(max(options.count - 1, 1)), step: 1) { editing in
+                guard !editing, let dragged = dragIndex else { return }
+                dragIndex = nil
+                let i = Int(dragged)
+                guard options.indices.contains(i), options[i].value != current?.value else { return }
+                model.set(.exposureCompensation, to: options[i])
             }
             .labelsHidden()
             .accessibilityLabel("Brightness")
@@ -115,10 +126,7 @@ private struct BrightnessSlider: View {
             Text(title)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
-        }
-        .onChange(of: current?.value, initial: true) { _, value in
-            index = Double(options.firstIndex { $0.value == value } ?? options.count / 2)
+                .frame(minWidth: 44, alignment: .trailing)
         }
     }
 }
@@ -129,7 +137,14 @@ private struct SettingPicker: View {
 
     var body: some View {
         Picker(state.title, selection: $model[setting: state.setting]) {
-            ForEach(state.options) { Text($0.title).tag($0.value) }
+            // The camera can report a current value outside the list it offers (or none); show it
+            // rather than a blank popup.
+            if let current = state.current, !state.options.contains(current) {
+                Text(current.title).tag(UInt32?.some(current.value))
+            } else if state.current == nil {
+                Text("—").tag(UInt32?.none)
+            }
+            ForEach(state.options) { Text($0.title).tag(UInt32?.some($0.value)) }
         }
         .labelsHidden()
         .pickerStyle(.menu)
@@ -180,7 +195,7 @@ struct BatteryLabel: View {
                 .monospacedDigit()
                 .foregroundStyle(isLow ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                 .lineLimit(1)
-                .accessibilityLabel("Battery \(text)")
+                .accessibilityLabel("Battery \(text)\(isLow ? ", low" : "")")
         }
     }
 }

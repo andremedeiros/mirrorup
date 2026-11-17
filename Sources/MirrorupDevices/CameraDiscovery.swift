@@ -23,9 +23,9 @@ public enum CameraDiscovery {
         }
     }
 
-    /// The first attached camera on `transport` for which `accept` is true, waiting up to `timeout`
-    /// for one to appear (ImageCaptureCore reports devices shortly after it starts, and again when one
-    /// is plugged in or turned on).
+    /// The first attached camera on `transport` for which `accept` is true. On ImageCaptureCore this
+    /// waits up to `timeout` for one to appear (it reports devices shortly after it starts, and again
+    /// when one is plugged in or turned on); USB enumeration is immediate.
     public static func firstCamera(
         on transport: CameraTransport, timeout: Duration, where accept: @escaping @Sendable (DiscoveredCamera) -> Bool
     ) async -> DiscoveredCamera? {

@@ -34,6 +34,7 @@ struct MenuView: View {
         .containerBackground(.thickMaterial, for: .window)
         // Opening the popover is the user asking what the camera is doing.
         .task {
+            model.refreshSystemPermissions()
             await model.refreshCameraInfo()
             await model.refreshControls()
         }
@@ -61,7 +62,9 @@ private struct LivePreview: View {
             }
             .overlay {
                 if phase == .live, let feedback = model.focusFeedback {
+                    // A new attempt is a new indicator: it starts pulsing again at its own point.
                     FocusIndicator(feedback: feedback, size: size)
+                        .id(feedback.id)
                 }
             }
             .overlay {
@@ -86,7 +89,8 @@ private struct LivePreview: View {
                 }
             }
             .clipShape(.rect(cornerRadius: 10))
-            .accessibilityElement(children: .combine)
+            // Keep the children readable: the placeholder carries the only camera-error text.
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Camera preview")
     }
 }
@@ -97,6 +101,7 @@ private struct FocusIndicator: View {
     let feedback: AppModel.FocusFeedback
     let size: CGSize
     @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var color: Color {
         switch feedback.state {
@@ -140,10 +145,15 @@ private struct FocusIndicator: View {
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.15), value: feedback.state)
         .onAppear {
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) { pulse = true }
         }
         .accessibilityElement()
         .accessibilityLabel(status ?? "")
+        .accessibilityHidden(status == nil)
+        .onChange(of: feedback.state) {
+            if let status, feedback.state != .focusing { AccessibilityNotification.Announcement(status).post() }
+        }
     }
 }
 

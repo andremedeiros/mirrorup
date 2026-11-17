@@ -347,13 +347,22 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         #expect(await camera.metadata().section(.frame) == nil)
     }
 
-    @Test func nonCanonDeviceIsRejected() throws {
+    /// Unsupported bodies stop the engine (`.fatal`) with the model's name instead of reconnecting forever.
+    @Test func bodiesWithoutEOSLiveViewAreUnsupported() throws {
         var info = try PTPDeviceInfo(decoding: fixture("deviceinfo-sl2.bin"))
         info.manufacturer = "Nikon Corporation"
-        #expect(throws: CameraError.self) { try CanonCamera.validate(info) }
+        #expect(throws: CameraError(.unsupported, "Canon EOS Rebel SL2 is not a Canon EOS camera.",
+                                    detail: "manufacturer Nikon Corporation")) { try CanonCamera.validate(info) }
         info.manufacturer = "Canon.Inc"
         info.operationsSupported.removeAll { $0 == 0x9153 }
-        #expect(throws: CameraError.self) { try CanonCamera.validate(info) }
+        do {
+            try CanonCamera.validate(info)
+            Issue.record("expected an error")
+        } catch {
+            #expect(error.kind == .unsupported)
+            #expect(error.disposition == .fatal)
+            #expect(error.message == "Canon EOS Rebel SL2 can't stream live view over USB.")
+        }
     }
 }
 

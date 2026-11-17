@@ -59,8 +59,14 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
     /// True while the shutter cycle of `capturePhoto()` runs: the mirror drops and live view pauses, so
     /// frame polling and the frame timeout are suspended. The timeout restarts when it ends.
     var shutterCycleActive = false {
-        didSet { lastFrameTime = .now }
+        didSet {
+            lastFrameTime = .now
+            if oldValue && !shutterCycleActive { shutterCycleEnded = .now }
+        }
     }
+    private var shutterCycleEnded: ContinuousClock.Instant?
+
+    public var lastFramePause: ContinuousClock.Instant? { shutterCycleActive ? .now : shutterCycleEnded }
     /// Objects the camera announced (ObjectAddedEx / RequestObjectTransfer) while a capture collects
     /// them; nil when nobody is waiting for one, so a user shooting on the body costs nothing.
     var collectedObjects: [CanonObjectInfo]?
@@ -425,12 +431,13 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
         // Canon bodies report either Canon's or Microsoft's vendor extension ID (the SL2 reports
         // Microsoft's), so identify by manufacturer and the operations live view needs.
         guard info.manufacturer.lowercased().hasPrefix("canon") else {
-            throw CameraError(.liveViewUnavailable, "This camera is not a Canon EOS camera.", detail: "manufacturer \(info.manufacturer)")
+            throw CameraError(.unsupported, "\(info.model.isEmpty ? "This camera" : info.model) is not a Canon EOS camera.",
+                              detail: "manufacturer \(info.manufacturer)")
         }
         let required = [CanonOperation.getViewfinderData, CanonOperation.setDevicePropValueEx, CanonOperation.getEvent, CanonOperation.setEventMode]
         let missing = required.filter { !info.supports($0) }
         guard missing.isEmpty else {
-            throw CameraError(.liveViewUnavailable, "This camera does not support live view over USB.",
+            throw CameraError(.unsupported, "\(info.model.isEmpty ? "This camera" : info.model) can't stream live view over USB.",
                               detail: "missing operations: \(missing.map(\.description).joined(separator: ", "))")
         }
     }

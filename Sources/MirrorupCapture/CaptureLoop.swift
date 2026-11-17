@@ -93,6 +93,12 @@ struct CaptureLoop: Sendable {
             } catch where error.disposition == .skipFrame {
                 core.apply(.failed(error), generation: generation)
                 continue
+            } catch where error.kind == .timeout {
+                // A photo can hold frames for longer than the stall timeout; that is not a stall. The
+                // camera gets a full stall window after the pause, as after a valid frame.
+                guard let pause = await backend.lastFramePause, pause > lastValidFrame else { throw error }
+                lastValidFrame = pause
+                continue
             }
             core.recordAcquisition(frame)
 

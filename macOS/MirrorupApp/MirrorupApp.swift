@@ -15,6 +15,7 @@ struct MirrorupApp: App {
         } label: {
             Image(systemName: appDelegate.model.menuBarIcon.rawValue)
                 .accessibilityLabel("Mirrorup")
+                .accessibilityValue(appDelegate.model.menuBarIcon.accessibilityValue)
         }
         .menuBarExtraStyle(.window)
 

@@ -34,6 +34,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 330)
+        .task { model.refreshSystemPermissions() }
     }
 }
 
