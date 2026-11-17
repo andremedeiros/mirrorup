@@ -20,6 +20,7 @@ final class AppModel {
     private enum Keys {
         static let source = "cameraSource"
         static let autoStart = "autoStartStreaming"
+        static let lastCameraName = "lastCameraName"
     }
 
     var source: CameraSource {
@@ -264,6 +265,17 @@ final class AppModel {
     private(set) var phase = Phase.off
     /// Connected camera's name; nil when none.
     private(set) var cameraName: String?
+    /// Name of the last camera that connected, remembered across launches so the camera can be
+    /// called by its name ("Canon EOS Rebel SL2") even while it is off.
+    private(set) var lastCameraName = UserDefaults.standard.string(forKey: Keys.lastCameraName)
+
+    /// What to call a camera source in the UI.
+    func title(for source: CameraSource) -> String {
+        switch source {
+        case .canon: lastCameraName ?? "Canon EOS Camera"
+        case .testPattern: "Test Pattern"
+        }
+    }
     /// The extension is active and receiving frames, so other apps can pick "Mirrorup Camera".
     private(set) var isVirtualCameraAvailable = false
 
@@ -288,6 +300,10 @@ final class AppModel {
         let wasLive = phase == .live
         phase = newPhase
         cameraName = status.camera?.name
+        if source == .canon, let name = cameraName, name != lastCameraName {
+            lastCameraName = name
+            UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
+        }
         isVirtualCameraAvailable = sinkState == .connected
         if newPhase == .live && !wasLive {
             // Once per connection, so the popover summary is ready; never on a timer.

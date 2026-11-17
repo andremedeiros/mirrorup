@@ -8,13 +8,6 @@ enum CameraSource: String, CaseIterable, Identifiable, Sendable {
 
     var id: Self { self }
 
-    var title: String {
-        switch self {
-        case .canon: "Canon camera (USB)"
-        case .testPattern: "Test pattern"
-        }
-    }
-
     func makeBackend() async throws(CameraError) -> any CameraBackend {
         switch self {
         case .canon: try await CanonBackendFactory.makeBackend()

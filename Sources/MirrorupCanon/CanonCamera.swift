@@ -68,6 +68,9 @@ public actor CanonCamera: CameraBackend {
         var id = baseIdentity
         if let info = deviceInfo {
             id.model = info.model
+            // The camera's own model string ("Canon EOS Rebel SL2") beats the USB product string
+            // ("Canon Digital Camera") used before connecting.
+            if !info.model.isEmpty { id.name = info.model }
             id.serialNumber = info.serialNumber.isEmpty ? nil : info.serialNumber
         }
         return id

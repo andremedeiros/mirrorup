@@ -54,6 +54,8 @@ struct CaptureLoop: Sendable {
                 try await backend.connect()
             }
             core.apply(.connected, generation: generation)
+            // Backends can name the camera more precisely once connected.
+            core.setCamera(await backend.identity, generation: generation)
 
             liveViewRequested = true
             try await withDeadline(after: configuration.operationTimeout, "startLiveView") { () throws(CameraError) in

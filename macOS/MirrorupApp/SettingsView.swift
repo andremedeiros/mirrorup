@@ -8,7 +8,7 @@ struct SettingsView: View {
             Section("General") {
                 Picker("Camera", selection: $model.source) {
                     ForEach(CameraSource.allCases) { source in
-                        Text(source.title).tag(source)
+                        Text(model.title(for: source)).tag(source)
                     }
                 }
                 Toggle("Start streaming when Mirrorup opens", isOn: $model.autoStartStreaming)
