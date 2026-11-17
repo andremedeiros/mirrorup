@@ -53,6 +53,13 @@ struct CameraControlsView: View {
                             .help("For a camera mounted upside down")
                     }
                 }
+                if model.isEnhanceSupported {
+                    GridRow {
+                        RowLabel("Detail")
+                        Toggle("Enhance", isOn: $model.enhance)
+                            .help("Sharpen the picture with Apple's machine-learning upscaler. Adds about 12 ms of latency per frame.")
+                    }
+                }
             }
 
             if let hint {

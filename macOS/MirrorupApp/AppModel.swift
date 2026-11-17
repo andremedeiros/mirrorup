@@ -23,6 +23,7 @@ final class AppModel {
         static let lastCameraName = "lastCameraName"
         static let mirrored = "mirrored"
         static let upsideDown = "upsideDown"
+        static let enhance = "enhanceDetail"
     }
 
     var source: CameraSource {
@@ -98,6 +99,14 @@ final class AppModel {
         didSet { applyOrientation(); UserDefaults.standard.set(upsideDown, forKey: Keys.upsideDown) }
     }
 
+    /// Sharpen frames with Apple's machine-learning super-resolution scaler. Persisted; hidden and
+    /// ignored on Macs without it (`isEnhanceSupported`).
+    var enhance: Bool {
+        didSet { engine.setEnhance(enhance); UserDefaults.standard.set(enhance, forKey: Keys.enhance) }
+    }
+
+    let isEnhanceSupported = CaptureEngine.isEnhanceSupported
+
     /// Registered with launchd as a login item (System Settings › General › Login Items).
     var opensAtLogin: Bool {
         get { loginItemStatus == .enabled }
@@ -132,6 +141,7 @@ final class AppModel {
         autoStartStreaming = defaults.bool(forKey: Keys.autoStart)
         mirrored = defaults.bool(forKey: Keys.mirrored)
         upsideDown = defaults.bool(forKey: Keys.upsideDown)
+        enhance = defaults.bool(forKey: Keys.enhance)
         cameraAccess = AVCaptureDevice.authorizationStatus(for: .video)
         let box = OSAllocatedUnfairLock(initialState: source)
         sourceBox = box
@@ -141,6 +151,7 @@ final class AppModel {
             try await box.withLock { $0 }.makeBackend()
         })
         applyOrientation()
+        engine.setEnhance(enhance)
         Task { await launch() }
     }
 

@@ -104,4 +104,15 @@ public actor CaptureEngine {
     }
 
     public nonisolated var orientation: FrameOrientation { core.orientation }
+
+    /// Sharpens every frame from the next decoded one on with Apple's machine-learning
+    /// super-resolution scaler, where the Mac supports it (`isEnhanceSupported`). Safe from any
+    /// thread; persists across `stop()`/`start()`.
+    public nonisolated func setEnhance(_ enabled: Bool) {
+        core.enhance = enabled
+    }
+
+    public nonisolated var isEnhancing: Bool { core.enhance }
+
+    public nonisolated static var isEnhanceSupported: Bool { FrameDecoder.isEnhanceSupported }
 }

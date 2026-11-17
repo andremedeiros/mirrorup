@@ -89,6 +89,11 @@ so they interleave safely with streaming.
 - Points are normalized to the camera's live-view frame. The app maps a click on the 16:9 preview
   back to that frame by undoing mirroring/rotation (`FrameOrientation.cameraPoint`) and the centre
   crop.
+- Enhance (opt-in, Apple silicon) swaps the decoder's scaling for a machine-learning upscale:
+  the decompression session decodes into the 16:9 crop at camera resolution in the scaler's
+  source format, `VTLowLatencySuperResolutionScaler` enlarges it 1.5×, and one pixel transfer
+  scales to 1280×720. The scaler is built on a background queue; until it is ready, and for crop
+  sizes it rejects, frames use plain scaling. Toggled with `CaptureEngine.setEnhance`.
 - Mirror and upside down are app-side (`CaptureEngine.setOrientation`), applied after decoding with
   `VTPixelRotationSession`, and skipped entirely when off.
 

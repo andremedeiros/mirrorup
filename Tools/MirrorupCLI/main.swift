@@ -17,9 +17,10 @@ let usage = """
       ptp info                        open a PTP session and print parsed GetDeviceInfo
       ptp operations                  list operations, events, properties and formats by name
       liveview snapshot --output F    save one live-view JPEG frame to F and its metadata to F.json
-      liveview benchmark [--duration S] [--no-decode] [--json F]
+      liveview benchmark [--duration S] [--no-decode] [--enhance] [--json F]
                                       stream live view for S seconds (default 60) and report
-                                      measured throughput and timing distributions
+                                      measured throughput and timing distributions; --enhance
+                                      adds the super-resolution scaler to the decode stage
 
     options:
       --transport imagecapture|usb    PTP transport (default imagecapture; usb needs the PTP
@@ -42,7 +43,7 @@ struct Arguments {
             let a = args[i]
             if a.hasPrefix("--") {
                 let name = String(a.dropFirst(2))
-                if ["no-decode", "help"].contains(name) {
+                if ["no-decode", "enhance", "help"].contains(name) {
                     flags.insert(name)
                 } else {
                     guard i + 1 < args.count else { throw CLIError("missing value for \(a)") }
@@ -86,7 +87,7 @@ enum MirrorupCLI {
                 let duration = Double(args.options["duration"] ?? "60") ?? 60
                 try await Benchmark.run(
                     duration: .milliseconds(Int(duration * 1000)), decode: !args.flags.contains("no-decode"),
-                    jsonPath: args.options["json"], transport: args.transport())
+                    enhance: args.flags.contains("enhance"), jsonPath: args.options["json"], transport: args.transport())
             default:
                 throw CLIError("unknown command '\(args.positional.joined(separator: " "))'\n\n\(usage)")
             }

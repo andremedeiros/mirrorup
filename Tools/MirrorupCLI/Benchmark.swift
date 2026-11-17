@@ -18,6 +18,8 @@ enum Benchmark {
         var notReadyResponses: Int
         var invalidFrames: Int
         var meanFrameBytes: Int
+        /// Whether frames went through the super-resolution scaler (`--enhance`), not merely requested.
+        var enhanced: Bool
         var sourceWidth: Int?
         var sourceHeight: Int?
         var acquisitionMs: Stats?
@@ -39,7 +41,11 @@ enum Benchmark {
         }
     }
 
-    static func run(duration: Duration, decode: Bool, jsonPath: String?, transport: CanonBackendFactory.Transport) async throws {
+    static func run(duration: Duration, decode: Bool, enhance: Bool, jsonPath: String?,
+                    transport: CanonBackendFactory.Transport) async throws {
+        if enhance && !FrameDecoder.isEnhanceSupported {
+            throw CLIError("--enhance needs Apple silicon with macOS 26's super-resolution scaler")
+        }
         let camera = try await CanonBackendFactory.makeCamera(transport: transport)
         let capacity = 1 << 16  // enough to keep every sample of a 30-minute run at 30 fps
         var acquisition = SampleWindow(capacity: capacity)
@@ -52,11 +58,12 @@ enum Benchmark {
         var sourceSize: (Int, Int)?
         var peakFootprint: UInt64 = 0
         let decoder = decode ? FrameDecoder(output: .virtualCamera) : nil
+        var enhanced = false
 
         do {
             try await camera.connect()
             let identity = await camera.identity
-            print("benchmarking \(identity.model ?? identity.name) via \(identity.transport) for \(duration) (decode: \(decode ? "on" : "off"))")
+            print("benchmarking \(identity.model ?? identity.name) via \(identity.transport) for \(duration) (decode: \(decode ? "on" : "off"), enhance: \(enhance ? "on" : "off"))")
             let resourcesStart = ProcessResources.snapshot()
             let armStart = ContinuousClock.now
             try await camera.startLiveView()
@@ -73,7 +80,8 @@ enum Benchmark {
                 if let decoder {
                     let t0 = HostTime.now()
                     do {
-                        let decoded = try decoder.decode(frame, sequence: frame.sequence)
+                        let decoded = try decoder.decode(frame, sequence: frame.sequence, enhance: enhance)
+                        enhanced = enhanced || decoder.isEnhancing
                         decodeTimes.add(HostTime.milliseconds(from: t0, to: decoded.decodedHostTime))
                         captureToDecoded.add(HostTime.milliseconds(from: frame.acquisitionEnd, to: decoded.decodedHostTime))
                         sourceSize = (decoded.sourceWidth, decoded.sourceHeight)
@@ -121,6 +129,7 @@ enum Benchmark {
                 notReadyResponses: stats.notReady,
                 invalidFrames: stats.invalidPayloads,
                 meanFrameBytes: frames > 0 ? bytes / frames : 0,
+                enhanced: enhanced,
                 sourceWidth: sourceSize?.0,
                 sourceHeight: sourceSize?.1,
                 acquisitionMs: Stats(acquisition.summary()),
@@ -159,7 +168,7 @@ enum Benchmark {
                      r.viewfinderRequests > 0 ? Double(r.notReadyResponses) * 100 / Double(r.viewfinderRequests) : 0, r.invalidFrames))
         if let s = acquisition.summary() { print("acquisition         \(s.formatted())") }
         if let s = interFrame.summary() { print("inter-frame         \(s.formatted())") }
-        if let s = decode.summary() { print("decode+scale        \(s.formatted())") }
+        if let s = decode.summary() { print("\(r.enhanced ? "decode+enhance" : "decode+scale  ")      \(s.formatted())") }
         if let s = captureToDecoded.summary() { print("capture->decoded    \(s.formatted())") }
         if let cpu = r.cpuPercentOfOneCore { print(String(format: "CPU                 %.1f%% of one core (whole process)", cpu)) }
         if let mem = r.peakFootprintMB { print(String(format: "memory              %.1f MB peak physical footprint", mem)) }

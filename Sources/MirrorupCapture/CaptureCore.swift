@@ -29,6 +29,7 @@ final class CaptureCore: Sendable {
     private let state = Mutex(State())
     /// Separate from `state` so the per-frame read never contends with status updates. Survives runs.
     private let orientationState = Mutex(FrameOrientation.normal)
+    private let enhanceState = Mutex(false)
     private let frames: LatestFrameBuffer
 
     init(frames: LatestFrameBuffer) {
@@ -38,6 +39,12 @@ final class CaptureCore: Sendable {
     var generation: UInt64 { state.withLock { $0.generation } }
 
     var isActive: Bool { state.withLock { $0.machine.state.isActive } }
+
+    /// Whether frames decoded after it is set go through the super-resolution scaler.
+    var enhance: Bool {
+        get { enhanceState.withLock { $0 } }
+        set { enhanceState.withLock { $0 = newValue } }
+    }
 
     /// Orientation applied to every frame decoded after it is set.
     var orientation: FrameOrientation {

@@ -75,7 +75,8 @@ streaming switch, the camera's current lens and exposure, and camera controls:
   there, with a square that turns green on a lock or yellow when the camera can't lock.
 - **Brightness** (exposure compensation), and under **Picture**: white balance, Picture Style, focus
   mode, aperture/shutter/ISO when the mode allows them, live-view zoom (1×/5×, click to move the
-  zoomed area), and Mirror / Upside Down.
+  zoomed area), Mirror / Upside Down, and **Enhance** (Apple silicon): sharpens the picture with
+  Apple's machine-learning upscaler at the cost of about 12 ms more latency per frame.
 - **Battery** level and **Take Photo**: a full-resolution photo, saved to Pictures › Mirrorup (it
   also stays on the camera's card).
 
