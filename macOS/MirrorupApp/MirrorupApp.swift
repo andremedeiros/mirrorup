@@ -39,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var isShuttingDown = false
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        PopoverSnapshot.scheduleIfRequested(model: model)
+        #endif
+    }
+
     /// Releases the camera (leaves live view) and the virtual-camera sink before quitting, so the
     /// camera is immediately usable by other apps.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -51,6 +51,10 @@ make install-app      # copy to /Applications (required for system extension act
 .build/debug/mirrorup liveview snapshot --output frame.jpg
 .build/debug/mirrorup liveview benchmark --duration 60 --json out.json
 log stream --predicate 'subsystem == "cool.andre.Mirrorup"' --level debug
+# Debug builds: render the popover (live model, real camera state) to a PNG ~8 s after launch.
+# Use this to check UI layout; the agent terminal has no Screen Recording permission. The video
+# layer itself renders black in the snapshot.
+open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 ```
 
 ## Platform pitfalls (verified)

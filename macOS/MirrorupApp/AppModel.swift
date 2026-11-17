@@ -362,7 +362,13 @@ final class AppModel {
         runControl("take photo") { controls in
             let photo = try await controls.capturePhoto()
             let url = try Self.savePhoto(photo)
-            self.controlMessage = ControlMessage(kind: .success, text: "Saved \(url.lastPathComponent)", fileURL: url)
+            let message = ControlMessage(kind: .success, text: "Saved \(url.lastPathComponent)", fileURL: url)
+            self.controlMessage = message
+            // Success is news, not state: clear it after a while unless something replaced it.
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                if self.controlMessage == message { self.controlMessage = nil }
+            }
         }
     }
 
@@ -427,10 +433,12 @@ final class AppModel {
         return url
     }
 
-    /// Lens and the exposure triangle, in the order photographers read them.
+    /// The popover's subtitle: shooting mode and lens ("P · EF-S18-55mm f/4-5.6 IS STM").
     private static func summary(_ info: CameraMetadata) -> String? {
-        let kinds: [CameraMetadata.ItemKind] = [.lensName, .aperture, .shutterSpeed, .iso]
-        let parts = kinds.compactMap { info.item($0)?.value }.filter { !$0.isEmpty }
+        // Shooting mode as on the dial ("P", from "P (Program AE)"), then the lens, which may truncate.
+        // Exposure values read "Auto" outside an exposure and say nothing.
+        let mode = info.item(.exposureMode)?.value.split(separator: " (").first.map(String.init)
+        let parts = [mode, info.item(.lensName)?.value].compactMap { $0 }.filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

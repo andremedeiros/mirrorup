@@ -8,7 +8,8 @@ struct MenuView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading) {
+        let attention = Attention(cameraAccess: model.cameraAccess, extensionState: model.extensionManager.state)
+        VStack(alignment: .leading, spacing: 12) {
             LivePreview(model: model, phase: model.phase)
             CameraHeader(
                 name: model.cameraName,
@@ -19,12 +20,18 @@ struct MenuView: View {
             if model.phase == .live {
                 CameraControlsView(model: model)
             }
-            AttentionView(model: model)
+            // A problem the user can fix gets its own block with the button; one they can't is just
+            // the footer's status line, so the popover never states the same thing twice.
+            if let attention, attention.action != nil {
+                AttentionView(attention: attention, extensionManager: model.extensionManager)
+            }
             Divider()
-            MenuFooter(isAvailable: model.isVirtualCameraAvailable)
+            MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable))
         }
-        .padding()
+        .padding(14)
         .frame(width: 340)
+        // The default glass lets whatever is behind the menu bar show through the labels.
+        .containerBackground(.thickMaterial, for: .window)
         // Opening the popover is the user asking what the camera is doing.
         .task {
             await model.refreshCameraInfo()
@@ -65,6 +72,16 @@ private struct LivePreview: View {
             .overlay(alignment: .bottomLeading) {
                 if phase == .live {
                     LiveBadge(model: model)
+                        .padding(8)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if phase == .live, model.controlState?.battery != nil {
+                    BatteryLabel(state: model.controlState)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: .capsule)
                         .padding(8)
                 }
             }
@@ -188,7 +205,7 @@ private struct CameraHeader: View {
     @Binding var isStreaming: Bool
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name ?? "Mirrorup")
                     .font(.headline)
@@ -196,7 +213,7 @@ private struct CameraHeader: View {
                 Text(summary ?? phase.caption)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
             }
             Spacer()
             Toggle("Stream", isOn: $isStreaming)
@@ -223,18 +240,22 @@ private extension AppModel.Phase {
 
 /// At most one problem, with the one action that fixes it. Camera errors are shown on the preview.
 private struct AttentionView: View {
-    let model: AppModel
+    let attention: Attention
+    let extensionManager: ExtensionManager
 
     var body: some View {
-        if let attention = Attention(cameraAccess: model.cameraAccess, extensionState: model.extensionManager.state) {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(attention.message, systemImage: "exclamationmark.circle")
-                    .font(.callout)
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(attention.message)
                     .fixedSize(horizontal: false, vertical: true)
-                if let action = attention.action {
-                    Button(action.title) { perform(action) }
-                        .controlSize(.small)
-                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            .font(.callout)
+            if let action = attention.action {
+                Button(action.title) { perform(action) }
+                    .controlSize(.small)
             }
         }
     }
@@ -246,9 +267,9 @@ private struct AttentionView: View {
                 NSWorkspace.shared.open(url)
             }
         case .openExtensionSettings:
-            model.extensionManager.openApprovalSettings()
+            extensionManager.openApprovalSettings()
         case .installExtension:
-            model.extensionManager.activate()
+            extensionManager.activate()
         }
     }
 }
@@ -267,30 +288,38 @@ private struct Attention {
     }
 
     let message: String
+    /// One line for the footer, for problems without an action.
+    let shortMessage: String
     let action: Action?
 
     init?(cameraAccess: AVAuthorizationStatus, extensionState: ExtensionManager.State) {
         if cameraAccess == .denied || cameraAccess == .restricted {
             message = "Mirrorup needs camera access to publish the Mirrorup Camera."
+            shortMessage = "Camera access needed"
             action = .openCameraPrivacySettings
             return
         }
         switch extensionState {
         case .awaitingApproval:
             message = "Allow the Mirrorup camera extension so other apps can use it."
+            shortMessage = "Extension awaiting approval"
             action = .openExtensionSettings
         case .notInstalled:
             message = "The Mirrorup Camera isn't installed yet."
+            shortMessage = "Mirrorup Camera not installed"
             action = .installExtension
         case .failed(let failure, _):
             message = failure
+            shortMessage = "Camera extension failed"
             action = .installExtension
         case .rebootRequired:
             message = "Restart your Mac to finish installing the Mirrorup Camera."
+            shortMessage = "Restart to finish installing"
             action = nil
         case .blockedByPolicy:
             // Installing again can't help: an administrator has to allow the extension.
             message = "Your organization's device management blocks the Mirrorup Camera. Ask your administrator to allow it."
+            shortMessage = "Blocked by device management"
             action = nil
         case .checking, .activating, .active, .deactivating:
             return nil
@@ -301,20 +330,44 @@ private struct Attention {
 // MARK: - Footer
 
 private struct MenuFooter: View {
-    let isAvailable: Bool
+    struct Status {
+        let text: String
+        let symbol: String
+        let color: Color
+        /// The full explanation, as a tooltip.
+        let help: String?
+
+        /// Nil when the attention block above already explains the state.
+        init?(attention: Attention?, isAvailable: Bool) {
+            if let attention {
+                guard attention.action == nil else { return nil }
+                (text, symbol, color, help) = (attention.shortMessage, "exclamationmark.triangle.fill", .orange, attention.message)
+            } else if isAvailable {
+                (text, symbol, color, help) = ("Available as “Mirrorup Camera”", "checkmark.circle.fill", .green, nil)
+            } else {
+                (text, symbol, color, help) = ("Mirrorup Camera unavailable", "circle.dashed", .secondary, nil)
+            }
+        }
+    }
+
+    let status: Status?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         HStack {
-            Label {
-                Text(isAvailable ? "Available as “Mirrorup Camera”" : "Mirrorup Camera unavailable")
-            } icon: {
-                Image(systemName: isAvailable ? "checkmark.circle.fill" : "circle.dashed")
-                    .foregroundStyle(isAvailable ? .green : .secondary)
+            if let status {
+                Label {
+                    Text(status.text)
+                } icon: {
+                    Image(systemName: status.symbol)
+                        .foregroundStyle(status.color)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help(status.help ?? "")
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
 
             Spacer()
 
