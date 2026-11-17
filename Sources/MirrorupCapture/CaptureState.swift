@@ -127,19 +127,24 @@ public struct CaptureStatus: Sendable, Equatable {
     public var lastRecoverableError: CameraError?
     /// Number of completed recoveries (a recovery completes when a frame is published after it).
     public var reconnectCount: Int
+    /// The latest frame's `CameraFrame.settingsRevision`: changes when the camera reports a setting
+    /// change, so a visible UI can re-read metadata and controls instead of polling them.
+    public var settingsRevision: UInt64
 
     public init(
         state: CaptureState = .idle,
         camera: CameraIdentity? = nil,
         metrics: FrameMetrics.Snapshot = .init(),
         lastRecoverableError: CameraError? = nil,
-        reconnectCount: Int = 0
+        reconnectCount: Int = 0,
+        settingsRevision: UInt64 = 0
     ) {
         self.state = state
         self.camera = camera
         self.metrics = metrics
         self.lastRecoverableError = lastRecoverableError
         self.reconnectCount = reconnectCount
+        self.settingsRevision = settingsRevision
     }
 }
 

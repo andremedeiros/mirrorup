@@ -6,6 +6,7 @@ import SwiftUI
 /// user, and a single ⋯ menu for everything else.
 struct MenuView: View {
     @Bindable var model: AppModel
+    @State private var refreshedOnce = false
 
     var body: some View {
         let attention = Attention(cameraAccess: model.cameraAccess, extensionState: model.extensionManager.state)
@@ -32,12 +33,20 @@ struct MenuView: View {
         .frame(width: 340)
         // The default glass lets whatever is behind the menu bar show through the labels.
         .containerBackground(.thickMaterial, for: .window)
-        // Opening the popover is the user asking what the camera is doing.
-        .task {
-            model.refreshSystemPermissions()
+        // Opening the popover is the user asking what the camera is doing; while it stays open, a
+        // setting changed on the camera (mode dial, exposure) is re-read, a burst coalesced into one read.
+        .task(id: model.settingsRevision) {
+            if refreshedOnce {
+                try? await Task.sleep(for: .milliseconds(300))
+                if Task.isCancelled { return }
+            } else {
+                refreshedOnce = true
+                model.refreshSystemPermissions()
+            }
             await model.refreshCameraInfo()
             await model.refreshControls()
         }
+        .onDisappear { refreshedOnce = false }
     }
 }
 

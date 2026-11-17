@@ -29,11 +29,16 @@ public struct CameraFrame: Sendable {
     public var acquisitionStart: UInt64
     /// Host time when the frame's bytes were fully received. This is the frame's capture timestamp.
     public var acquisitionEnd: UInt64
-    public init(sequence: UInt64, jpeg: Data, acquisitionStart: UInt64, acquisitionEnd: UInt64) {
+    /// Counts the setting changes the camera has reported so far (mode dial, exposure, white
+    /// balance...), as of this frame; 0 for backends that don't track them. A different value than
+    /// the previous frame's means `metadata()` and the controls may read differently now.
+    public var settingsRevision: UInt64
+    public init(sequence: UInt64, jpeg: Data, acquisitionStart: UInt64, acquisitionEnd: UInt64, settingsRevision: UInt64 = 0) {
         self.sequence = sequence
         self.jpeg = jpeg
         self.acquisitionStart = acquisitionStart
         self.acquisitionEnd = acquisitionEnd
+        self.settingsRevision = settingsRevision
     }
 }
 

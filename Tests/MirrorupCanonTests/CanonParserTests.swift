@@ -31,6 +31,27 @@ private let terminator = record(0, [])
         #expect(events.contains { if case .allowedValuesChanged(0xD103, _) = $0 { true } else { false } })
     }
 
+    /// The popover re-reads settings when the revision moves, so a camera re-reporting values it
+    /// already sent (every GetEvent drain can) must not count as a change.
+    @Test func revisionCountsOnlyRealChanges() throws {
+        var cache = CanonPropertyCache()
+        let initial = try CanonEventParser.parse(fixture("getevent-initial-sl2.bin"))
+        cache.apply(initial)
+        let afterDump = cache.revision
+        #expect(afterDump > 0)
+        cache.apply(initial)
+        #expect(cache.revision == afterDump)
+        // Mode dial P → Av: AE mode changes, the aperture list appears.
+        let dial: [CanonEvent] = [
+            .propertyChanged(property: 0xD105, value: .integer(2)),
+            .allowedValuesChanged(property: 0xD101, values: [0x28, 0x2B]),
+        ]
+        cache.apply(dial)
+        #expect(cache.revision == afterDump + 2)
+        cache.apply(dial)
+        #expect(cache.revision == afterDump + 2)
+    }
+
     @Test func propertyValueWidths() throws {
         let data = record(0xC189, [0xB0, 0xD1, 0, 0, 2, 0, 0, 0])
             + record(0xC189, [0x04, 0xD1, 0, 0, 0xF8])  // u8 value

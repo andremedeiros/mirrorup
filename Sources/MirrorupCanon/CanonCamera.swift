@@ -342,7 +342,8 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
                     pollStatistics.payloadBytes += result.data.count
                     lastFrameTime = .now
                     latestFrame = parsed
-                    return CameraFrame(sequence: sequence, jpeg: parsed.jpeg, acquisitionStart: start, acquisitionEnd: end)
+                    return CameraFrame(sequence: sequence, jpeg: parsed.jpeg, acquisitionStart: start, acquisitionEnd: end,
+                                       settingsRevision: properties.revision)
                 case CanonResponse.objectNotReady, .deviceBusy:
                     pollStatistics.notReady += 1
                     if ContinuousClock.now - lastFrameTime > options.frameTimeout {

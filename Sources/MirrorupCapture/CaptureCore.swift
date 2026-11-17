@@ -15,6 +15,7 @@ final class CaptureCore: Sendable {
         var backend: (any CameraBackend)?
         var lastRecoverableError: CameraError?
         var reconnectCount = 0
+        var settingsRevision: UInt64 = 0
         var metrics = FrameMetrics()
         /// Host time of the failure that started the recovery in progress.
         var recoveryStartedAt: UInt64?
@@ -158,7 +159,10 @@ final class CaptureCore: Sendable {
     }
 
     func recordAcquisition(_ frame: CameraFrame) {
-        state.withLock { $0.metrics.recordAcquisition(frame) }
+        state.withLock { state in
+            state.metrics.recordAcquisition(frame)
+            state.settingsRevision = frame.settingsRevision
+        }
     }
 
     func recordDecoded(_ frame: DecodedFrame, decodeStart: UInt64) {
@@ -202,7 +206,8 @@ final class CaptureCore: Sendable {
             camera: state.camera,
             metrics: state.metrics.snapshot(framesDropped: frames.droppedCount, now: now),
             lastRecoverableError: state.lastRecoverableError,
-            reconnectCount: state.reconnectCount
+            reconnectCount: state.reconnectCount,
+            settingsRevision: state.settingsRevision
         )
     }
 

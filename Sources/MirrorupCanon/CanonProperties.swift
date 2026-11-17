@@ -39,6 +39,8 @@ public enum CanonPropertyValue: Sendable, Equatable {
 public struct CanonPropertyCache: Sendable {
     public private(set) var values: [UInt32: CanonPropertyValue] = [:]
     public private(set) var allowedValues: [UInt32: [UInt32]] = [:]
+    /// Bumped whenever an event changes a value or an allowed-value list (not on repeats).
+    public private(set) var revision: UInt64 = 0
 
     public init() {}
 
@@ -47,8 +49,10 @@ public struct CanonPropertyCache: Sendable {
     public mutating func apply(_ events: [CanonEvent]) {
         for event in events {
             switch event {
-            case .propertyChanged(let prop, let value): values[prop] = value
-            case .allowedValuesChanged(let prop, let allowed): allowedValues[prop] = allowed
+            case .propertyChanged(let prop, let value):
+                if values.updateValue(value, forKey: prop) != value { revision &+= 1 }
+            case .allowedValuesChanged(let prop, let allowed):
+                if allowedValues.updateValue(allowed, forKey: prop) != allowed { revision &+= 1 }
             default: break
             }
         }

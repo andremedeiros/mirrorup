@@ -70,6 +70,9 @@ final class AppModel {
     /// One line for the popover: shooting mode and lens (`summary(_:)`), derived when camera info is
     /// read (never per frame).
     private(set) var cameraSummary: String?
+    /// Changes when the camera reports a setting change (mode dial, exposure...); views that show
+    /// camera info or controls re-read them on change. Assigned only on change, not per status.
+    private(set) var settingsRevision: UInt64 = 0
 
     /// Camera controls as of the last read (popover opened, or after a change). Never polled.
     private(set) var controlState: CameraControlState?
@@ -594,6 +597,11 @@ final class AppModel {
         let wasLive = phase == .live
         phase = newPhase
         cameraName = status.camera?.name
+        if status.settingsRevision != settingsRevision {
+            let revision = status.settingsRevision
+            settingsRevision = revision
+            Diagnostics.app.debug("Camera reported a settings change (revision \(revision))")
+        }
         if runningSource == .camera, let name = cameraName, name != lastCameraName {
             lastCameraName = name
             UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
