@@ -213,7 +213,9 @@ libgphoto2 walks the blocks and clamps or aborts when a length exceeds the remai
 | `0x00000000`, length 8 | Terminator | SL2: **Verified**. libgphoto2 just stops at the end of the buffer. |
 
 The SL2 sends its blocks in this order: `FFFFFFFF, 1, F, 10, 14, 4, 5, 12, C, D, E, A, 13, 15, 7,
-11, 0`. **Verified**. Block meanings above are taken from 6D/R6 numbering. That the SL2 uses the
+11, 0` on firmware 1.0.1, and the same plus a type `0x8` block before the terminator on firmware
+1.1.0. **Verified** (one capture each; whether `0x8` depends on the firmware or on the AF mode is
+**Hyp**). Block meanings above are taken from 6D/R6 numbering. That the SL2 uses the
 same meanings: **Hyp**.
 
 **JPEG extraction (libgphoto2):** take the first block of type 1, 9 or 11, copy bytes
@@ -304,6 +306,17 @@ Events that need action in Mirrorup (**Hyp**, derived from the meanings above):
   closing, plus `requestSendPTPCommand` completing with an error. **Hyp**. The `0xC18D`/`0xC18E`
   events may arrive first. **Hyp**
 - On the SL2, `0xA101` LowBattery or `0xC18B` may show up near battery exhaustion. **Hyp**
+
+### 7.1 Identity properties seen on the SL2
+
+| Code | Content | Provenance |
+|---|---|---|
+| `0xD1D8` | Lens name, ASCII (`EF-S18-55mm f/4-5.6 IS STM`) | **Verified** |
+| `0xD125` | Body ID string (`EOSSL2`) | **Verified** (meaning beyond the value: **Hyp**) |
+| `0xD1A8` | LensStatus, 1 with a lens attached | **Verified** |
+
+Firmware versions tested: 1.0.1 and 1.1.0 (DeviceInfo `DeviceVersion` `3-1.0.1` / `3-1.1.0`); both
+expose the same 170 operations. **Verified**
 
 ## 8. Exposure and focus controls (for later)
 

@@ -96,6 +96,14 @@ private let terminator = record(0, [])
         #expect(frame.jpeg.startIndex == 0x3C + 8)
     }
 
+    /// Firmware 1.1.0 adds a type 0x8 block (AF frame on other EOS bodies) before the terminator.
+    @Test func realSL2Firmware110FrameWithExtraBlock() throws {
+        let frame = try CanonViewfinderParser.parse(fixture("evf-sl2-fw110.bin"))
+        #expect(frame.blockTypes.last == 0x8)
+        #expect(frame.blockTypes.contains(1))
+        #expect(frame.jpeg.prefix(2) == Data([0xFF, 0xD8]))
+    }
+
     @Test func jpegBlockMayBeType11() throws {
         let jpeg: [UInt8] = [0xFF, 0xD8, 0x00, 0x00, 0xFF, 0xD9]
         let data = record(0xFFFF_FFFF, [0, 0, 0, 0]) + record(0xB, jpeg) + terminator

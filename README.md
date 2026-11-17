@@ -40,7 +40,7 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 
 | Camera | USB ID | Status |
 |---|---|---|
-| Canon EOS Rebel SL2 / 200D | `04A9:32CC` | ✅ validated (live view 960×640 or 1024×576 depending on camera settings, ~30 fps) |
+| Canon EOS Rebel SL2 / 200D | `04A9:32CC` | ✅ validated on firmware 1.0.1 and 1.1.0 (live view 960×640 or 1024×576 depending on camera settings, ~30 fps) |
 | Other Canon EOS DSLRs/mirrorless | `04A9:*` | Should work if the body lists GetViewfinderData (`0x9153`) in its DeviceInfo. Unvalidated |
 
 ## Requirements
@@ -54,7 +54,7 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 
 ```bash
 make build        # Swift package + CLI (warnings are errors)
-make test         # 135 hardware-independent tests
+make test         # 136 hardware-independent tests
 make install-app  # generate the Xcode project, build, copy to /Applications
 ```
 

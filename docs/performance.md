@@ -3,7 +3,7 @@
 All numbers below were measured on the hardware listed, with the commands shown. Raw output is in
 `benchmarks/`. Nothing here is a requested or nominal setting.
 
-**Setup:** Canon EOS Rebel SL2 (firmware 1.0.1) on USB 2.0 High Speed, Apple Silicon Mac, macOS 27.2,
+**Setup:** Canon EOS Rebel SL2 (firmware 1.0.1 unless noted) on USB 2.0 High Speed, Apple Silicon Mac, macOS 27.2,
 debug build of the `mirrorup` CLI, ImageCaptureCore transport, decode on (VideoToolbox JPEG →
 1280×720 `420v`). Camera in a stills mode, live-view frames 1024×576 JPEG.
 
@@ -33,6 +33,14 @@ Timing distributions for the 600 s soak (ms, n = 17,980):
 
 The 60 s run's maxima (decode 382 ms, inter-frame 392 ms) are the one-time VideoToolbox session
 creation on the first frame. Memory grew by under 1 MB between the 60 s and 600 s runs.
+
+### Firmware 1.1.0
+
+After updating the camera to Canon firmware 1.1.0 (`benchmarks/sl2-fw110-60s-imagecapture.json`):
+the operations list is identical (170), all hardware tests pass, and timings are unchanged within run
+to run variation. Measured: 29.93 fps; acquisition p50/p95/p99 14.65/20.01/23.25 ms; decode p50/p95
+4.66/7.32 ms; 69% not-ready polls; 0 invalid payloads; 8.3% CPU; 9.4 MB. The live-view payload gained
+one block (type `0x8`) before the terminator; the parser ignores it.
 
 ## Recovery (app, real hardware)
 
