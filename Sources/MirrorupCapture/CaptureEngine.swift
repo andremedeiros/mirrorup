@@ -83,4 +83,11 @@ public actor CaptureEngine {
 
     /// Whether the loop started by the latest `start()` has not been stopped. For tests.
     var isRunning: Bool { running != nil }
+
+    /// Decoded metadata of the camera in the current session, or nil when no camera is connected.
+    /// Computed on request (it formats every property), so call it when the user asks for it.
+    public nonisolated func cameraMetadata() async -> CameraMetadata? {
+        guard let backend = core.backend else { return nil }
+        return await backend.metadata()
+    }
 }

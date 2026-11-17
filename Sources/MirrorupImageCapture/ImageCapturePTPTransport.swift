@@ -29,13 +29,44 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
 
     private enum Phase { case closed, open, failed(PTPTransportError) }
 
+    /// One in-flight request. The first outcome wins (camera reply, timeout, cancellation, removal);
+    /// an outcome that arrives before the continuation is installed is kept, not lost.
     private final class Pending: Sendable {
-        let completion = Mutex<CheckedContinuation<Result<PTPTransactionResult, PTPError>, Never>?>(nil)
-        func finish(_ result: Result<PTPTransactionResult, PTPError>) {
-            completion.withLock { c in
-                c?.resume(returning: result)
-                c = nil
+        typealias Outcome = Result<PTPTransactionResult, PTPError>
+        private enum Slot {
+            case empty
+            case waiting(CheckedContinuation<Outcome, Never>)
+            case early(Outcome)
+            case done
+        }
+        private let slot = Mutex(Slot.empty)
+
+        func install(_ continuation: CheckedContinuation<Outcome, Never>) {
+            let early: Outcome? = slot.withLock { slot in
+                if case .early(let outcome) = slot {
+                    slot = .done
+                    return outcome
+                }
+                slot = .waiting(continuation)
+                return nil
             }
+            if let early { continuation.resume(returning: early) }
+        }
+
+        func finish(_ outcome: Outcome) {
+            let waiter: CheckedContinuation<Outcome, Never>? = slot.withLock { slot in
+                switch slot {
+                case .empty:
+                    slot = .early(outcome)
+                    return nil
+                case .waiting(let continuation):
+                    slot = .done
+                    return continuation
+                case .early, .done:
+                    return nil
+                }
+            }
+            waiter?.resume(returning: outcome)
         }
     }
 
@@ -88,10 +119,17 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         }
         let container = try command.encodedContainer(transactionID: transactionID)
         let pending = Pending()
+        // ImageCaptureCore has no request timeout; race our own. Cancelled as soon as the request
+        // settles, so at most one timer exists per in-flight request.
+        let timer = Task {
+            do { try await Task.sleep(for: timeout) } catch { return }
+            pending.finish(.failure(.transport(.timedOut(operation: command.code.description, after: timeout))))
+        }
+        defer { timer.cancel() }
 
         let result: Result<PTPTransactionResult, PTPError> = await withTaskCancellationHandler {
             await withCheckedContinuation { cont in
-                pending.completion.withLock { $0 = cont }
+                pending.install(cont)
                 state.withLock { $0.pending = pending }
                 let camera = UncheckedBox(camera)
                 Task { @MainActor in
@@ -115,10 +153,6 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
                             pending.finish(.failure(.invalidContainerLength(UInt32(response.count))))
                         }
                     }
-                }
-                Task {
-                    try? await Task.sleep(for: timeout)
-                    pending.finish(.failure(.transport(.timedOut(operation: command.code.description, after: timeout))))
                 }
             }
         } onCancel: {

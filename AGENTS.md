@@ -28,6 +28,10 @@ Mirrorup turns a Canon EOS camera (validated: EOS Rebel SL2 / 200D) into a macOS
 - No unbounded frame queues anywhere. Drop stale frames instead of adding latency.
 - Do not change camera settings beyond what live view requires; restore `0xD1B0` on stop.
 - User-facing text comes from `CameraError.message`; raw PTP/IOReturn codes go in `detail` only.
+- Never drop camera metadata and never show magic values: decode every property, event, format and
+  live-view block into `CameraMetadata` with human values (`CanonCatalog`, `CanonViewfinderMetadata`).
+  Undocumented codes are kept with `isDocumented == false` (hidden in UI, kept in JSON/diagnostics);
+  never guess a meaning. Identify things with enums (`ItemKind`, `SectionKind`, `WindowID`), not strings.
 - Don't publish measurements you didn't take; benchmarks live in `benchmarks/` with their raw output.
 - Never hand-edit or commit generated Xcode artifacts. Change `macOS/project.yml` and run `make project`.
   Identifiers come from `APP_BUNDLE_ID`/`EXTENSION_BUNDLE_ID` there; never repeat them in code or plists.

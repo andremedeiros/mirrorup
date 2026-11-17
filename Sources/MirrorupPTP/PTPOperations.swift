@@ -34,19 +34,8 @@ public struct PTPOperationCode: RawRepresentable, Hashable, Sendable, CustomStri
     public static let getPartialObject = Self(0x101B)
     public static let initiateOpenCapture = Self(0x101C)
 
-    static let standardNames: [UInt16: String] = [
-        0x1001: "GetDeviceInfo", 0x1002: "OpenSession", 0x1003: "CloseSession", 0x1004: "GetStorageIDs",
-        0x1005: "GetStorageInfo", 0x1006: "GetNumObjects", 0x1007: "GetObjectHandles", 0x1008: "GetObjectInfo",
-        0x1009: "GetObject", 0x100A: "GetThumb", 0x100B: "DeleteObject", 0x100C: "SendObjectInfo",
-        0x100D: "SendObject", 0x100E: "InitiateCapture", 0x100F: "FormatStore", 0x1010: "ResetDevice",
-        0x1011: "SelfTest", 0x1012: "SetObjectProtection", 0x1013: "PowerDown", 0x1014: "GetDevicePropDesc",
-        0x1015: "GetDevicePropValue", 0x1016: "SetDevicePropValue", 0x1017: "ResetDevicePropValue",
-        0x1018: "TerminateOpenCapture", 0x1019: "MoveObject", 0x101A: "CopyObject", 0x101B: "GetPartialObject",
-        0x101C: "InitiateOpenCapture",
-    ]
-
-    /// Vendor modules register names so logs and the CLI print readable opcodes.
-    public var name: String? { Self.standardNames[rawValue] }
+    /// Standard (PTP/MTP) name; vendor modules name their own codes (e.g. `CanonCatalog`).
+    public var name: String? { PTPCatalog.operationName(rawValue) }
 
     public var description: String {
         let hex = "0x" + String(rawValue, radix: 16, uppercase: true)

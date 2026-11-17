@@ -261,6 +261,52 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [1])
     }
 
+    /// Every property the camera reports ends up in the metadata: none dropped, magic values decoded.
+    @Test func metadataReportsEveryPropertyInHumanTerms() async throws {
+        let (camera, _) = try makeCamera()
+        try await camera.connect()
+        let metadata = await camera.metadata()
+        let reported = await camera.properties.values.count
+        let propertyItems = metadata.sections.flatMap(\.items).filter {
+            switch $0.kind {
+            case .supportedOperations, .supportedEvents, .supportedProperties, .supportedCaptureFormats,
+                 .supportedImageFormats, .transport, .manufacturer, .model, .firmwareVersion, .protocolVersion,
+                 .vendorExtension:
+                false
+            case .serialNumber:
+                $0.raw.count == 32  // DeviceInfo serial (hex string), not the 0xD1AF property
+            default:
+                true
+            }
+        }
+        #expect(propertyItems.count >= reported)
+        #expect(metadata.item(.lensName)?.value == "EF-S18-55mm f/4-5.6 IS STM")
+        #expect(metadata.section(.lens)?.items.contains { $0.kind == .lensName } == true)
+        #expect(metadata.item(.firmwareVersion)?.value == "1.0.1")
+        #expect(metadata.item(.autoPowerOff)?.value == "2 min")
+        #expect(metadata.item(.iso)?.value == "Auto")
+        let formats = try #require(metadata.item(.supportedImageFormats)?.value)
+        #expect(formats.contains("EXIF/JPEG"))
+        // Undocumented codes are kept (flagged), and the documented view drops them.
+        let allItems = metadata.sections.flatMap(\.items)
+        let shownItems = metadata.documentedOnly.sections.flatMap(\.items)
+        #expect(allItems.contains { !$0.isDocumented })
+        #expect(shownItems.allSatisfy { $0.isDocumented })
+    }
+
+    @Test func latestFrameMetadataIsFormattedOnlyWhenAsked() async throws {
+        let (camera, _) = try makeCamera()
+        try await camera.connect()
+        #expect(await camera.metadata().section(.frame) == nil)
+        try await camera.startLiveView()
+        _ = try await camera.nextFrame()
+        let frame = try #require(await camera.metadata().section(.frame))
+        #expect(frame.items.contains { $0.kind == .frameSize && $0.value.contains("960") })
+        #expect(frame.items.contains { $0.kind == .sensorSize })
+        try await camera.stopLiveView()
+        #expect(await camera.metadata().section(.frame) == nil)
+    }
+
     @Test func nonCanonDeviceIsRejected() throws {
         var info = try PTPDeviceInfo(decoding: fixture("deviceinfo-sl2.bin"))
         info.manufacturer = "Nikon Corporation"

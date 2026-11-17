@@ -55,6 +55,26 @@ Errors are layered. `PTPTransportError` (I/O) is wrapped by `PTPError` (protocol
 maps both to `CameraError`. `CameraError` carries a plain-language `message`, a diagnostic `detail`
 and a `disposition` (skip frame / reconnect / wait for device / fatal / stop) that drives recovery.
 
+## Camera metadata
+
+Every value the camera reports is decoded once, in the vendor layer, into the vendor-neutral
+`CameraMetadata` model (`MirrorupCapture/CameraMetadata.swift`): sections (`SectionKind`) of items
+keyed by `ItemKind` (an enum; neutral kinds such as `.aperture`, `.lensName`, `.focusPoints`, plus
+`.vendorProperty(code)` / `.vendorFrameBlock(type)` for vendor codes without a neutral meaning). Each
+item carries the human value, the raw protocol value, the allowed values, and whether any public
+source documents it.
+
+- **Camera-wide:** `CameraBackend.metadata()`. `CanonCamera` combines DeviceInfo (identity,
+  capabilities named through `PTPCatalog`/`CanonCatalog`) with every GetEvent property and
+  allowed-value list (decoded by `CanonCatalog`). The capture loop refreshes it after connect, after
+  live view starts, and once a second while streaming.
+- **Per frame:** `CanonViewfinderParser` parses every block of each live-view payload into
+  `CanonViewfinderMetadata` (cheap, no formatting). `CanonCamera` formats it into items at most
+  4 times a second and attaches them to `CameraFrame.metadata`.
+- **Consumers:** `CaptureStatus.cameraMetadata` / `.frameMetadata`. The app's Camera window and the
+  CLI's text output show `documentedOnly`. `mirrorup camera info --json`, the snapshot sidecar and the
+  diagnostics export keep everything, including undocumented codes.
+
 ## Capture state machine
 
 ```mermaid

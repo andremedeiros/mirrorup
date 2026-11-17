@@ -29,7 +29,6 @@ public struct CameraFrame: Sendable {
     public var acquisitionStart: UInt64
     /// Host time when the frame's bytes were fully received. This is the frame's capture timestamp.
     public var acquisitionEnd: UInt64
-
     public init(sequence: UInt64, jpeg: Data, acquisitionStart: UInt64, acquisitionEnd: UInt64) {
         self.sequence = sequence
         self.jpeg = jpeg
@@ -114,6 +113,11 @@ public protocol CameraBackend: Sendable {
     func stopLiveView() async throws(CameraError)
     /// Releases every camera resource. Must not throw; safe to call in any state, repeatedly.
     func disconnect() async
+    /// Everything the backend knows about the camera, decoded to human values: identity, lens,
+    /// exposure and image settings, power, capabilities, and the metadata of the latest live-view
+    /// frame. Reflects the latest state the camera has reported. Formatting is done here, on demand,
+    /// never on the capture path: call it when a user asks, not on a timer.
+    func metadata() async -> CameraMetadata
 }
 
 /// A decoded frame ready for display or publication. Pixel buffers are IOSurface-backed so they can

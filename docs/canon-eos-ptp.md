@@ -212,6 +212,19 @@ libgphoto2 walks the blocks and clamps or aborts when a length exceeds the remai
 | `0x0000000F`, `0x10`, `0x13`, `0x14`, `0x15` | Unknown. The SL2 sends them; none of the sources decode them. | **Verified** (presence only) |
 | `0x00000000`, length 8 | Terminator | SL2: **Verified**. libgphoto2 just stops at the end of the buffer. |
 
+Decoded on the SL2 (both fixtures; layouts checked against the bytes):
+
+| Type | SL2 layout and values | Provenance |
+|---|---|---|
+| `0x8` | `[u32 count]` then count × `[u32 state, u32 (always 1), u32 x, u32 y, u32 w, u32 h]`, sensor pixels. Firmware 1.1.0 sends 49 entries in a 7×7 grid, each 649×399, all state 0. The payload is exactly 4 + 24·count bytes. States 0x10 resting, 0x11 focused (FC.SDK), 0x20 face, 0x30 tracking (Schroden); state 0 is undocumented. | Layout **Verified**; state meanings **Ext** |
+| `0xA` | `[u32 Unix seconds][u32 counter]`, e.g. 2026-11-16 21:10:30 UTC, counter 770 | **Verified** (local vs UTC: **Hyp**) |
+| `0xE` | `[u32 w][u32 h]`: 6000×3988 (fw 1.0.1 capture), 5976×3952 (fw 1.1.0 capture) | **Verified** |
+| `0x12` | `[x][y][w][h]` visible area, e.g. `0,298,5976,3356` (16:9 crop of the sensor) | **Verified** |
+| `0x11` | 4 planes × 256 bins × u32. Plane totals are equal, and the first plane matches 0.299R + 0.587G + 0.114B of the others, which confirms the Y, R, G, B order | **Verified** |
+| `0x4` / `0x5` / `0xD` / `0x7` | magnification 1; origin and rect zero; AF activity 1 = idle (2 = focusing per FC.SDK) | **Verified** values; meanings **Ext** |
+| `0xFFFFFFFF` | 52-byte header; some bytes repeat values from blocks 0xF and 0x14; no fields documented | **Verified** (presence only) |
+| `0xC`, `0xF`, `0x10`, `0x13`, `0x14`, `0x15` | undocumented; kept raw and reported as undocumented | **Verified** (presence only) |
+
 The SL2 sends its blocks in this order: `FFFFFFFF, 1, F, 10, 14, 4, 5, 12, C, D, E, A, 13, 15, 7,
 11, 0` on firmware 1.0.1, and the same plus a type `0x8` block before the terminator on firmware
 1.1.0. **Verified** (one capture each; whether `0x8` depends on the firmware or on the AF mode is

@@ -22,6 +22,10 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
   drops, reconnects) with diagnostics export.
 - **One owner per camera:** the app holds the camera session, and any number of apps can use
   Mirrorup Camera at once.
+- **Nothing hidden:** every value the camera reports is decoded to human terms (lens, aperture,
+  shutter, ISO, white balance, image quality, battery, focus points, sensor size, formats...) in the
+  app's Camera window and `mirrorup camera info`. Codes no public source documents are kept, raw,
+  in the JSON export and diagnostics.
 
 ## Status
 
@@ -65,16 +69,17 @@ See [docs/development.md](docs/development.md) for signing, identifiers and hard
 **App:** launch `/Applications/Mirrorup.app`. On first launch it asks macOS to install the Camera
 Extension. Approve it in System Settings → General → Login Items & Extensions → Camera Extensions,
 then choose **Mirrorup Camera** in your video app. The menu-bar icon shows the camera status and has
-start/stop, the preview and diagnostics.
+start/stop, the preview, the live Camera info window and diagnostics.
 
 **CLI:**
 
 ```bash
 mirrorup devices                                   # attached Canon cameras
 mirrorup inspect                                   # USB descriptors, endpoints, interface owner
+mirrorup camera info [--json all.json]             # everything the camera reports, decoded
 mirrorup ptp info                                  # parsed GetDeviceInfo
-mirrorup ptp operations                            # supported operations/events/properties
-mirrorup liveview snapshot --output frame.jpg      # one real live-view frame
+mirrorup ptp operations                            # operations/events/properties/formats by name
+mirrorup liveview snapshot --output frame.jpg      # one real frame + frame.jpg.json metadata
 mirrorup liveview benchmark --duration 60          # measured FPS and timing distributions
 ```
 

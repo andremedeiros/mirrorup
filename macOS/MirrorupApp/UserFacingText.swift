@@ -37,15 +37,6 @@ enum UserFacingText {
         }
     }
 
-    /// The explanation shown under the headline, if any.
-    static func explanation(for status: CaptureStatus) -> String? {
-        switch status.state {
-        case let .failed(error): message(for: error)
-        case .recovering: status.lastRecoverableError.map(message(for:))
-        default: nil
-        }
-    }
-
     static func sink(_ state: VirtualCameraSink.State) -> String {
         switch state {
         case .inactive: "Not started"

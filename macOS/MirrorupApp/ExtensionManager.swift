@@ -40,6 +40,14 @@ final class ExtensionManager: NSObject {
     private enum RequestKind { case properties, activation, deactivation }
 
     private(set) var state: State = .checking
+
+    /// A request is in flight; management buttons are disabled meanwhile.
+    var isBusy: Bool {
+        switch state {
+        case .checking, .activating, .deactivating: true
+        default: false
+        }
+    }
     @ObservationIgnored private var pending: [ObjectIdentifier: RequestKind] = [:]
     /// True while a launch-time check may turn into an activation request.
     @ObservationIgnored private var activateAfterCheck = false

@@ -5,52 +5,60 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Camera") {
-                Picker("Source", selection: $model.source) {
+            Section("General") {
+                Picker("Camera", selection: $model.source) {
                     ForEach(CameraSource.allCases) { source in
                         Text(source.title).tag(source)
                     }
                 }
                 Toggle("Start streaming when Mirrorup opens", isOn: $model.autoStartStreaming)
+                Toggle("Open at login", isOn: $model.opensAtLogin)
+                if let error = model.loginItemError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                } else if model.loginItemStatus == .requiresApproval {
+                    Text("Allow Mirrorup in System Settings › General › Login Items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Section("Camera extension") {
-                ExtensionSettingsRow(manager: model.extensionManager)
+            Section {
+                ExtensionSettings(manager: model.extensionManager)
+            } header: {
+                Text("Mirrorup Camera")
+            } footer: {
+                Text("The camera extension publishes “Mirrorup Camera” to FaceTime, browsers and other video apps.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 460, height: 330)
     }
 }
 
-private struct ExtensionSettingsRow: View {
+private struct ExtensionSettings: View {
     let manager: ExtensionManager
 
     var body: some View {
-        LabeledContent("Status") {
-            Text(manager.state.summary)
-                .multilineTextAlignment(.trailing)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LabeledContent("Status", value: manager.state.summary)
         if manager.state == .awaitingApproval {
-            Text(ExtensionManager.approvalInstructions)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Button("Open System Settings") { manager.openApprovalSettings() }
+            LabeledContent {
+                Button("Open System Settings") { manager.openApprovalSettings() }
+            } label: {
+                Text(ExtensionManager.approvalInstructions)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        HStack {
-            Button(manager.state == .active ? "Reinstall" : "Install") { manager.activate() }
-                .disabled(isBusy)
-            Button("Uninstall", role: .destructive) { manager.deactivate() }
-                .disabled(isBusy || manager.state == .notInstalled)
-            Spacer()
-            Button("Refresh") { manager.refresh() }
-                .disabled(isBusy)
+        LabeledContent("Manage") {
+            HStack {
+                Button(manager.state == .active ? "Reinstall" : "Install") { manager.activate() }
+                Button("Uninstall", role: .destructive) { manager.deactivate() }
+                    .disabled(manager.state == .notInstalled)
+            }
+            .disabled(manager.isBusy)
         }
-    }
-
-    private var isBusy: Bool {
-        manager.state == .activating || manager.state == .deactivating || manager.state == .checking
+        .task { manager.refresh() }
     }
 }

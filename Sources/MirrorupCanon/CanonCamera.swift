@@ -42,6 +42,9 @@ public actor CanonCamera: CameraBackend {
     private var keepAliveRequested = false
     /// Set when live view was re-armed after the body left PC output; cleared by the next frame.
     private var rearmedSinceLastFrame = false
+    /// Typed metadata and JPEG of the latest live-view frame. Kept as parsed (no formatting) so the
+    /// capture path stays cheap; `metadata()` formats it when someone asks.
+    private var latestFrame: CanonViewfinderFrame?
     /// Incremented by stopLiveView/disconnect so a suspended nextFrame notices it was superseded.
     private var epoch: UInt64 = 0
     public private(set) var pollStatistics = PollStatistics()
@@ -71,6 +74,77 @@ public actor CanonCamera: CameraBackend {
     }
 
     public var info: PTPDeviceInfo? { deviceInfo }
+
+    // MARK: Metadata
+
+    /// Identity and capabilities from DeviceInfo plus every property the camera has reported through
+    /// GetEvent, each decoded by `CanonCatalog`. Nothing the camera reports is left out; codes no
+    /// public source documents are included with `isDocumented == false`.
+    public func metadata() -> CameraMetadata {
+        var sections: [CameraMetadata.SectionKind: [CameraMetadata.Item]] = [:]
+        func add(_ item: CameraMetadata.Item, to section: CameraMetadata.SectionKind) {
+            sections[section, default: []].append(item)
+        }
+
+        let id = identity
+        add(.init(.transport, value: id.transport, raw: id.transport), to: .device)
+        if let info = deviceInfo {
+            add(.init(.manufacturer, value: info.manufacturer, raw: info.manufacturer), to: .device)
+            add(.init(.model, value: info.model, raw: info.model), to: .device)
+            add(.init(.firmwareVersion, value: Self.firmwareVersion(info.deviceVersion), raw: info.deviceVersion), to: .device)
+            if !info.serialNumber.isEmpty {
+                add(.init(.serialNumber, value: info.serialNumber, raw: info.serialNumber), to: .device)
+            }
+            let ptpVersion = String(format: "%d.%02d", info.standardVersion / 100, info.standardVersion % 100)
+            add(.init(.protocolVersion, value: ptpVersion, raw: String(info.standardVersion)), to: .device)
+            let vendor = info.vendorExtensionID == PTPDeviceInfo.vendorExtensionCanon ? "Canon"
+                : info.vendorExtensionID == PTPDeviceInfo.vendorExtensionMicrosoft ? "Microsoft (MTP)"
+                : "Vendor \(Self.hex(info.vendorExtensionID))"
+            let vendorValue = info.vendorExtensionDescription.isEmpty ? "\(vendor), version \(info.vendorExtensionVersion)"
+                : "\(vendor), version \(info.vendorExtensionVersion): \(info.vendorExtensionDescription)"
+            add(.init(.vendorExtension, value: vendorValue, raw: Self.hex(info.vendorExtensionID)), to: .device)
+
+            func list(_ kind: CameraMetadata.ItemKind, _ codes: [UInt16], name: (UInt16) -> String?) {
+                let names = codes.map { code in name(code).map { "\($0) (\(Self.hex(code)))" } ?? Self.hex(code) }
+                add(.init(kind, value: names.isEmpty ? "None" : names.joined(separator: ", "),
+                          raw: codes.map { Self.hex($0) }.joined(separator: " ")), to: .capabilities)
+            }
+            list(.supportedOperations, info.operationsSupported, name: CanonCatalog.operationName)
+            list(.supportedEvents, info.eventsSupported) { CanonCatalog.eventName(UInt32($0)) }
+            list(.supportedProperties, info.devicePropertiesSupported, name: PTPCatalog.propertyName)
+            list(.supportedCaptureFormats, info.captureFormats, name: CanonCatalog.objectFormatName)
+            list(.supportedImageFormats, info.imageFormats, name: CanonCatalog.objectFormatName)
+        }
+
+        for (code, value) in properties.values.sorted(by: { $0.key < $1.key }) {
+            var item = CanonCatalog.describe(property: code, value: value)
+            if let allowed = properties.allowedValues[code], !allowed.isEmpty {
+                item.allowedValues = CanonCatalog.describeAllowedValues(property: code, values: allowed)
+            }
+            add(item, to: CanonCatalog.section(forProperty: code))
+        }
+
+        if let frame = latestFrame {
+            let size = CanonViewfinderParser.jpegDimensions(frame.jpeg)
+            for item in frame.metadata.items(frameWidth: size?.width, frameHeight: size?.height) {
+                add(item, to: .frame)
+            }
+        }
+
+        return CameraMetadata(sections: sections
+            .sorted { $0.key < $1.key }
+            .map { CameraMetadata.Section($0.key, items: $0.value) })
+    }
+
+    /// DeviceInfo reports e.g. "3-1.1.0"; the user-facing firmware version is the part after the dash.
+    static func firmwareVersion(_ deviceVersion: String) -> String {
+        guard let dash = deviceVersion.firstIndex(of: "-") else { return deviceVersion }
+        return String(deviceVersion[deviceVersion.index(after: dash)...])
+    }
+
+    static func hex<T: BinaryInteger>(_ value: T) -> String {
+        "0x" + String(value, radix: 16, uppercase: true)
+    }
 
     // MARK: Connection
 
@@ -185,6 +259,7 @@ public actor CanonCamera: CameraBackend {
     public func stopLiveView() async throws(CameraError) {
         guard case .liveView(let savedOutput, let savedMode) = state else { return }
         epoch &+= 1
+        latestFrame = nil
         state = .connected
         do {
             if let info = deviceInfo, info.supports(CanonOperation.terminateViewfinder) {
@@ -243,6 +318,7 @@ public actor CanonCamera: CameraBackend {
                     pollStatistics.frames += 1
                     pollStatistics.payloadBytes += result.data.count
                     lastFrameTime = .now
+                    latestFrame = parsed
                     return CameraFrame(sequence: sequence, jpeg: parsed.jpeg, acquisitionStart: start, acquisitionEnd: end)
                 case CanonResponse.objectNotReady, .deviceBusy:
                     pollStatistics.notReady += 1

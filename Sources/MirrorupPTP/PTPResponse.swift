@@ -38,21 +38,8 @@ public struct PTPResponseCode: RawRepresentable, Hashable, Sendable, CustomStrin
     public static let transactionCancelled = Self(0x201F)
     public static let specificationOfDestinationUnsupported = Self(0x2020)
 
-    static let standardNames: [UInt16: String] = [
-        0x2000: "Undefined", 0x2001: "OK", 0x2002: "GeneralError", 0x2003: "SessionNotOpen",
-        0x2004: "InvalidTransactionID", 0x2005: "OperationNotSupported", 0x2006: "ParameterNotSupported",
-        0x2007: "IncompleteTransfer", 0x2008: "InvalidStorageID", 0x2009: "InvalidObjectHandle",
-        0x200A: "DevicePropNotSupported", 0x200B: "InvalidObjectFormatCode", 0x200C: "StoreFull",
-        0x200D: "ObjectWriteProtected", 0x200E: "StoreReadOnly", 0x200F: "AccessDenied",
-        0x2010: "NoThumbnailPresent", 0x2011: "SelfTestFailed", 0x2012: "PartialDeletion",
-        0x2013: "StoreNotAvailable", 0x2014: "SpecificationByFormatUnsupported", 0x2015: "NoValidObjectInfo",
-        0x2016: "InvalidCodeFormat", 0x2017: "UnknownVendorCode", 0x2018: "CaptureAlreadyTerminated",
-        0x2019: "DeviceBusy", 0x201A: "InvalidParentObject", 0x201B: "InvalidDevicePropFormat",
-        0x201C: "InvalidDevicePropValue", 0x201D: "InvalidParameter", 0x201E: "SessionAlreadyOpen",
-        0x201F: "TransactionCancelled", 0x2020: "SpecificationOfDestinationUnsupported",
-    ]
-
-    public var name: String? { Self.standardNames[rawValue] }
+    /// Standard (PTP/MTP) name; vendor modules name their own codes (e.g. `CanonCatalog`).
+    public var name: String? { PTPCatalog.responseName(rawValue) }
 
     public var description: String {
         let hex = "0x" + String(rawValue, radix: 16, uppercase: true)

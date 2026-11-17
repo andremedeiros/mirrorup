@@ -132,6 +132,31 @@ public actor SyntheticCamera: CameraBackend {
     public private(set) var frameRequests = 0
     public private(set) var framesDelivered = 0
 
+    public func metadata() -> CameraMetadata {
+        let size = "\(configuration.width) × \(configuration.height)"
+        let state = switch session {
+        case .disconnected: "Off"
+        case .connected: "Ready"
+        case .live: "Streaming"
+        }
+        return CameraMetadata(sections: [
+            .init(.device, items: [
+                .init(.manufacturer, value: "Mirrorup", raw: "Mirrorup"),
+                .init(.model, value: identity.name, raw: identity.model ?? ""),
+                .init(.transport, value: identity.transport, raw: identity.transport),
+            ]),
+            .init(.liveView, items: [
+                .init(.liveViewMode, value: state, raw: String(describing: session)),
+                .init(.liveViewFrameSize, value: size, raw: size),
+            ]),
+        ] + (sequence > 0 ? [
+            .init(.frame, items: [
+                .init(.frameSize, value: size, raw: size),
+                .init(.frameCounter, value: String(sequence), raw: String(sequence)),
+            ]),
+        ] : []))
+    }
+
     public init(configuration: Configuration = .init()) {
         self.configuration = configuration
         identity = CameraIdentity(name: "Synthetic Camera", model: "\(configuration.width)x\(configuration.height)",

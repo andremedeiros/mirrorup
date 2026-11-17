@@ -6,6 +6,19 @@ import Testing
 
 @Suite("Capture engine", .timeLimit(.minutes(1)))
 struct CaptureEngineTests {
+    @Test func cameraMetadataIsReadOnDemandFromTheActiveBackend() async throws {
+        let engine = CaptureEngine(configuration: testConfiguration()) { SyntheticCamera(configuration: syntheticConfiguration()) }
+        #expect(await engine.cameraMetadata() == nil)
+        await engine.start()
+        _ = try #require(await withTimeout(.seconds(10)) { await engine.frames.next(after: 0) })
+        let metadata = try #require(await engine.cameraMetadata())
+        #expect(metadata.item(.manufacturer)?.value == "Mirrorup")
+        #expect(metadata.item(.liveViewMode)?.value == "Streaming")
+        #expect(metadata.item(.frameSize)?.value == "\(testSource.width) × \(testSource.height)")
+        await engine.stop()
+        #expect(await engine.cameraMetadata() == nil)
+    }
+
     @Test func happyPathStreamsDecodedFrames() async throws {
         let camera = SyntheticCamera(configuration: syntheticConfiguration())
         let engine = CaptureEngine(configuration: testConfiguration()) { camera }

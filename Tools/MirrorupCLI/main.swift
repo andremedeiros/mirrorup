@@ -11,9 +11,12 @@ let usage = """
     commands:
       devices                         list attached Canon USB devices and Image Capture cameras
       inspect                         USB descriptors, endpoints, interface ownership, claim test
+      camera info [--json F]          everything the camera reports, decoded: identity, lens,
+                                      exposure, image, power, capabilities (--json writes all of it,
+                                      including codes no public source documents)
       ptp info                        open a PTP session and print parsed GetDeviceInfo
-      ptp operations                  list operations, events and properties the camera supports
-      liveview snapshot --output F    save one live-view JPEG frame to F
+      ptp operations                  list operations, events, properties and formats by name
+      liveview snapshot --output F    save one live-view JPEG frame to F and its metadata to F.json
       liveview benchmark [--duration S] [--no-decode] [--json F]
                                       stream live view for S seconds (default 60) and report
                                       measured throughput and timing distributions
@@ -73,6 +76,7 @@ struct MirrorupCLI {
             switch (args.positional.first, args.positional.dropFirst().first) {
             case ("devices", _): await Commands.devices()
             case ("inspect", _): Commands.inspect()
+            case ("camera", "info"): try await Commands.cameraInfo(jsonPath: args.options["json"], transport: args.transport())
             case ("ptp", "info"): try await Commands.ptpInfo(transport: args.transport())
             case ("ptp", "operations"): try await Commands.ptpOperations(transport: args.transport())
             case ("liveview", "snapshot"):

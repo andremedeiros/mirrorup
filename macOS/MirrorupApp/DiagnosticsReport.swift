@@ -15,6 +15,8 @@ enum DiagnosticsReport {
         var cameraAccess: String
         var cpuPercent: Double?
         var memoryBytes: UInt64?
+        /// Everything the camera reports (including undocumented codes), read at export time.
+        var cameraMetadata: CameraMetadata?
     }
 
     /// Builds the report. Reads OSLogStore, which can take a moment: call off the main actor.
@@ -50,6 +52,23 @@ enum DiagnosticsReport {
             lines.append("Failure: \(error.kind) — \(error.message) [\(error.detail ?? "no detail")]")
         }
         lines.append("")
+
+        // Everything the camera reported, including codes no public source documents, with raw values.
+        if let metadata = snapshot.cameraMetadata, !metadata.isEmpty {
+            lines.append("== Camera ==")
+            for section in metadata.sections.sorted(by: { $0.kind < $1.kind }) {
+                lines.append("[\(section.title)]")
+                for item in section.items {
+                    var line = "\(item.label): \(item.value)  (raw \(item.raw))"
+                    if !item.isDocumented { line += "  [undocumented]" }
+                    lines.append(line)
+                    if !item.allowedValues.isEmpty {
+                        lines.append("    allowed: \(item.allowedValues.joined(separator: ", "))")
+                    }
+                }
+            }
+            lines.append("")
+        }
 
         lines.append("== Virtual camera ==")
         lines.append("Extension: \(snapshot.extensionState)")

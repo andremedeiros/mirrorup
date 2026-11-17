@@ -11,6 +11,8 @@ final class CaptureCore: Sendable {
         var machine = CaptureStateMachine()
         var generation: UInt64 = 0
         var camera: CameraIdentity?
+        /// Backend of the session in progress, so metadata can be requested on demand.
+        var backend: (any CameraBackend)?
         var lastRecoverableError: CameraError?
         var reconnectCount = 0
         var metrics = FrameMetrics()
@@ -59,6 +61,7 @@ final class CaptureCore: Sendable {
         state.withLock { state in
             _ = state.machine.handle(.stop)
             state.camera = nil
+            state.backend = nil
             state.recoveryStartedAt = nil
             Diagnostics.capture.info("Capture stopped")
             broadcast(&state)
@@ -115,6 +118,16 @@ final class CaptureCore: Sendable {
             state.camera = camera
         }
     }
+
+    /// Records the backend of `generation`'s current session (nil once it is torn down).
+    func setBackend(_ backend: (any CameraBackend)?, generation: UInt64) {
+        state.withLock { state in
+            guard state.generation == generation else { return }
+            state.backend = backend
+        }
+    }
+
+    var backend: (any CameraBackend)? { state.withLock { $0.backend } }
 
     func beginSession() {
         state.withLock { $0.metrics.beginSession() }

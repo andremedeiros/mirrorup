@@ -47,6 +47,7 @@ struct CaptureLoop: Sendable {
         do throws(CameraError) {
             if Task.isCancelled { throw .cancellation }
             core.setCamera(await backend.identity, generation: generation)
+            core.setBackend(backend, generation: generation)
             core.apply(.backendCreated, generation: generation)
 
             try await withDeadline(after: configuration.operationTimeout, "connect") { () throws(CameraError) in
@@ -64,6 +65,7 @@ struct CaptureLoop: Sendable {
         } catch {
             sessionError = error
         }
+        core.setBackend(nil, generation: generation)
         await shutDown(backend, stopLiveView: liveViewRequested)
         return Task.isCancelled ? .cancellation : sessionError
     }

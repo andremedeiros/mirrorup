@@ -100,13 +100,18 @@ enum Commands {
         print("Device version      \(info.deviceVersion)")
         print("Serial number       \(info.serialNumber.isEmpty ? "(empty)" : info.serialNumber)")
         print("PTP version         \(Double(info.standardVersion) / 100)")
-        print("Vendor extension    0x\(String(info.vendorExtensionID, radix: 16)) v\(info.vendorExtensionVersion) \"\(info.vendorExtensionDescription)\"")
+        let vendor = info.vendorExtensionID == PTPDeviceInfo.vendorExtensionCanon ? "Canon"
+            : info.vendorExtensionID == PTPDeviceInfo.vendorExtensionMicrosoft ? "Microsoft (MTP)" : "unknown"
+        print("Vendor extension    \(vendor) (0x\(String(info.vendorExtensionID, radix: 16))) v\(info.vendorExtensionVersion) \"\(info.vendorExtensionDescription)\"")
         print("Functional mode     \(info.functionalMode)")
         print("Operations          \(info.operationsSupported.count)")
         print("Events              \(info.eventsSupported.count)")
         print("Device properties   \(info.devicePropertiesSupported.count)")
-        print("Capture formats     \(info.captureFormats.map(hex16).joined(separator: " "))")
-        print("Image formats       \(info.imageFormats.map(hex16).joined(separator: " "))")
+        func formats(_ codes: [UInt16]) -> String {
+            codes.map { CanonCatalog.objectFormatName($0) ?? hex16($0) }.joined(separator: ", ")
+        }
+        print("Capture formats     \(formats(info.captureFormats))")
+        print("Image formats       \(formats(info.imageFormats))")
         print("Live view support   \(info.supports(CanonOperation.getViewfinderData) ? "yes (GetViewFinderData)" : "no")")
         print("Transport           \(await camera.identity.transport)")
     }
@@ -123,10 +128,60 @@ enum Commands {
             throw error
         }
         await session.close()
-        print("\(info.model): \(info.operationsSupported.count) operations")
-        for op in info.operationsSupported.sorted() { print("  \(CanonOperation.describe(op))") }
-        print("Events: " + info.eventsSupported.sorted().map(hex16).joined(separator: " "))
-        print("Properties: " + info.devicePropertiesSupported.sorted().map(hex16).joined(separator: " "))
+        func show(_ title: String, _ codes: [UInt16], name: (UInt16) -> String?) {
+            print("\(title) (\(codes.count)):")
+            for code in codes.sorted() { print("  \(hex16(code))  \(name(code) ?? "undocumented")") }
+        }
+        print(info.model)
+        show("Operations", info.operationsSupported, name: CanonCatalog.operationName)
+        show("Events", info.eventsSupported) { CanonCatalog.eventName(UInt32($0)) }
+        show("Device properties", info.devicePropertiesSupported, name: PTPCatalog.propertyName)
+        show("Capture formats", info.captureFormats, name: CanonCatalog.objectFormatName)
+        show("Image formats", info.imageFormats, name: CanonCatalog.objectFormatName)
+    }
+
+    /// Connects (remote mode + event drain, which reports every property), prints the decoded
+    /// metadata grouped by section, and leaves the camera in local mode again.
+    static func cameraInfo(jsonPath: String?, transport: CanonBackendFactory.Transport) async throws {
+        let camera = try await openCamera(transport)
+        let metadata: CameraMetadata
+        do {
+            try await camera.connect()
+            metadata = await camera.metadata()
+            await camera.disconnect()
+        } catch {
+            await camera.disconnect()
+            throw error
+        }
+        printMetadata(metadata.documentedOnly)
+        let all = metadata.sections.reduce(0) { $0 + $1.items.count }
+        let documented = metadata.documentedOnly.sections.reduce(0) { $0 + $1.items.count }
+        print("\n\(documented) documented items shown; \(all - documented) undocumented vendor codes omitted (included in --json).")
+        if let jsonPath {
+            try writeJSON(metadata, to: jsonPath)
+            print("wrote \(jsonPath)")
+        }
+    }
+
+    static func printMetadata(_ metadata: CameraMetadata) {
+        for section in metadata.sections.sorted(by: { $0.kind < $1.kind }) {
+            print("\n\(section.title)")
+            let width = min(28, section.items.map(\.label.count).max() ?? 0)
+            for item in section.items {
+                let label = item.label.padding(toLength: max(width, item.label.count), withPad: " ", startingAt: 0)
+                print("  \(label)  \(item.value)")
+                if item.allowedValues.count > 1 {
+                    let pad = String(repeating: " ", count: max(width, item.label.count) + 4)
+                    print("\(pad)options: \(item.allowedValues.joined(separator: ", "))")
+                }
+            }
+        }
+    }
+
+    static func writeJSON(_ value: some Encodable, to path: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(value).write(to: URL(fileURLWithPath: path))
     }
 
     static func snapshot(output: String, transport: CanonBackendFactory.Transport) async throws {
@@ -135,11 +190,18 @@ enum Commands {
             try await camera.connect()
             try await camera.startLiveView()
             let frame = try await camera.nextFrame()
+            // Ask before stopping live view: the frame section describes the latest frame.
+            let frameMetadata = await camera.metadata().section(.frame).map { CameraMetadata(sections: [$0]) }
             try await camera.stopLiveView()
             await camera.disconnect()
             try frame.jpeg.write(to: URL(fileURLWithPath: output))
             let dims = jpegDimensions(frame.jpeg).map { "\($0.width)x\($0.height)" } ?? "undecodable"
             print("saved \(frame.jpeg.count) bytes (\(dims)) to \(output)")
+            if let metadata = frameMetadata {
+                printMetadata(metadata.documentedOnly)
+                try writeJSON(metadata, to: output + ".json")
+                print("\nwrote frame metadata to \(output).json")
+            }
         } catch {
             await camera.disconnect()
             throw error

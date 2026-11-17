@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-enum WindowID {
-    static let preview = "preview"
-    static let diagnostics = "diagnostics"
+enum WindowID: String {
+    case cameraInfo, diagnostics
 }
 
 @main
@@ -12,19 +11,19 @@ struct MirrorupApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContentView(model: appDelegate.model)
+            MenuView(model: appDelegate.model)
         } label: {
-            Image(systemName: appDelegate.model.menuBarSymbol)
+            Image(systemName: appDelegate.model.menuBarIcon.rawValue)
                 .accessibilityLabel("Mirrorup")
         }
         .menuBarExtraStyle(.window)
 
-        Window("Mirrorup Preview", id: WindowID.preview) {
-            PreviewWindowContent(model: appDelegate.model)
+        Window("Camera Info", id: WindowID.cameraInfo.rawValue) {
+            CameraInfoView(model: appDelegate.model)
         }
-        .defaultSize(width: 640, height: 400)
+        .defaultSize(width: 480, height: 640)
 
-        Window("Mirrorup Diagnostics", id: WindowID.diagnostics) {
+        Window("Mirrorup Diagnostics", id: WindowID.diagnostics.rawValue) {
             DiagnosticsView(model: appDelegate.model)
         }
         .defaultSize(width: 520, height: 640)
@@ -50,27 +49,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
-    }
-}
-
-private struct PreviewWindowContent: View {
-    let model: AppModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            PreviewView(renderer: model.preview)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .frame(minWidth: 320, minHeight: 180)
-            HStack {
-                Text(model.headline)
-                Spacer()
-                if model.wantsStreaming {
-                    Text(String(format: "Camera %.1f fps", model.status.metrics.cameraFPS))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(8)
-        }
     }
 }
