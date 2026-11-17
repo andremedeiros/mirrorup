@@ -89,8 +89,8 @@ public struct CameraRegistry: Sendable {
     }
 
     /// The not-found error for a discovery that matched no driver. `unresponsive`: supported cameras
-    /// on USB that the transport didn't list. A camera that is switched off still enumerates on USB,
-    /// and one wedged by a USB dropout looks the same, so the message covers both.
+    /// on USB that the transport didn't list: seen on the SL2 for minutes after a USB dropout. Some
+    /// bodies may also stay on USB while off or asleep, so the message covers both.
     static func notFound(unsupported: [DiscoveredCamera], unresponsive: [DiscoveredCamera] = [],
                          drivers: [any CameraDriver]) -> CameraError {
         let supported = drivers.map(\.name).joined(separator: ", ")

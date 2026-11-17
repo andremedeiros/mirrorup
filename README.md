@@ -119,7 +119,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 | Symptom | Fix |
 |---|---|
 | "No camera found" | Turn the camera on and check the cable. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
-| "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it: it is switched off (it still shows up on USB), or a USB dropout left it stuck. Turn it on, or off and on again. |
+| "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it, usually after a USB dropout left it stuck. Turn it off and on again. |
 | "The camera's USB connection dropped … times" | The cable, adapter or port is dropping the connection (macOS logs `hardware connection lost`). Try another cable, or plug the camera straight into the Mac. |
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |

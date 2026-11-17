@@ -84,7 +84,9 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 - About 70% of GetViewfinderData polls return `0xA102` (not ready) at 30 fps; this is normal.
 - The live-view frame size depends on camera settings (960×640 and 1024×576 both observed). Always use
   the decoded size; never assume it.
-- A camera that is switched off still enumerates on USB but not in ImageCaptureCore.
+- A camera can be on USB but not in ImageCaptureCore: the SL2 stayed that way for minutes after a
+  USB dropout (until power-cycled). Switching the SL2 off with its power switch removes it from USB
+  entirely (2026-11-17).
 - System extensions activate only from `/Applications`, and the user must approve them in
   System Settings → General → Login Items & Extensions. MDM policies with `AllowUserOverrides = false`
   deny unlisted extensions outright (seen on a Kandji-managed Mac; error `forbiddenBySystemPolicy`).
