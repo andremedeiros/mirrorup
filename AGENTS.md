@@ -18,7 +18,7 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 | `Sources/MirrorupCanon` | `CanonDriver` + Canon EOS backend (`CanonCamera`), events, EVF parsing, controls | PTP, Capture, Devices |
 | `Sources/MirrorupCameras` | `CameraRegistry.builtIn`: the shipped driver list (only module that knows every driver) | Devices, drivers |
 | `Tools/MirrorupCLI` | `mirrorup` CLI | all |
-| `macOS/` | SwiftUI menu-bar app + CoreMediaIO Camera Extension. `project.yml` (XcodeGen) is the only project definition; the `.xcodeproj`, Info.plists and entitlements are generated and untracked | package products |
+| `macOS/` | SwiftUI menu-bar app + CoreMediaIO Camera Extension. `project.yml` (XcodeGen) is the only project definition; the `.xcodeproj`, Info.plists and entitlements are generated and untracked. `Shared/AppIcon.icon` (Icon Composer: SVG layers + `icon.json`, edit in Xcode's Icon Composer) is the icon of both targets; `docs/images/mirrorup-icon.png` is its 256 px render | package products |
 | `web/webcam-test.html` | Safari/WebRTC validation page | — |
 
 ## Hard constraints

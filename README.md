@@ -1,3 +1,5 @@
+<img src="docs/images/mirrorup-icon.png" alt="Mirrorup icon: a seven-blade aperture glowing amber" width="128">
+
 # Mirrorup
 
 Mirrorup turns a camera on USB into a low-latency macOS webcam. Canon EOS cameras are supported today;

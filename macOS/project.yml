@@ -55,6 +55,11 @@ targets:
         PRODUCT_NAME: Mirrorup
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
         ENABLE_APP_SANDBOX: NO
+        # Shared/AppIcon.icon (Icon Composer): Finder, Dock, Launchpad.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Empty locally (automatic signing). The release workflow signs manually with Developer ID
+        # and sets it to its profile's name. The extension needs no profile.
+        PROVISIONING_PROFILE_SPECIFIER: $(MIRRORUP_APP_PROFILE)
     info:
       path: MirrorupApp/Info.plist
       properties:
@@ -92,6 +97,8 @@ targets:
         PRODUCT_NAME: $(EXTENSION_BUNDLE_ID)
         PRODUCT_BUNDLE_IDENTIFIER: $(EXTENSION_BUNDLE_ID)
         ENABLE_APP_SANDBOX: YES
+        # Same icon, shown for the extension in System Settings › Login Items & Extensions.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SKIP_INSTALL: YES
     info:
       path: MirrorupCameraExtension/Info.plist
