@@ -3,7 +3,9 @@ import CoreVideo
 import MirrorupCapture
 
 /// Wraps decoded frames in CMSampleBuffers without copying pixels. The format description is cached
-/// and only rebuilt when a buffer's dimensions, pixel format or colour attachments change.
+/// and only rebuilt when a buffer's dimensions, pixel format or colour attachments change. The buffers
+/// cross into the Camera Extension, so they carry no sample attachments: CoreMediaIO cannot serialize
+/// some of them (`DisplayImmediately` makes the extension reject every frame with -19646).
 struct SampleBufferFactory {
     private var formatDescription: CMVideoFormatDescription?
     private let frameDuration = CMTime(value: 1, timescale: VirtualCameraConfig.frameRate)
@@ -43,17 +45,6 @@ struct SampleBufferFactory {
             sampleBufferOut: &sampleBuffer
         )
         guard status == noErr, let sampleBuffer else { throw .sampleBuffer(status) }
-
-        // The in-app preview has no timebase; show each frame as soon as it is enqueued.
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
-           CFArrayGetCount(attachments) > 0 {
-            let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(
-                dictionary,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
-            )
-        }
         return sampleBuffer
     }
 }

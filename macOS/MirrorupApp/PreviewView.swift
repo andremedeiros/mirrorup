@@ -64,12 +64,37 @@ final class PreviewRenderer {
             Diagnostics.app.error("Preview renderer failed: \(renderer.error?.localizedDescription ?? "unknown", privacy: .public); flushing")
             renderer.flush()
         }
-        guard renderer.isReadyForMoreMediaData else { return }
-        renderer.enqueue(sampleBuffer)
+        guard renderer.isReadyForMoreMediaData, let displayed = Self.displayingImmediately(sampleBuffer) else { return }
+        renderer.enqueue(displayed)
         renderedSinceAttach += 1
         if renderedSinceAttach == 1 {
             Diagnostics.app.info("Preview rendering (first frame enqueued, layer \(Int(layer.bounds.width))x\(Int(layer.bounds.height)))")
         }
+    }
+
+    /// The layer has no timebase, so each frame must be shown as soon as it is enqueued. The attachment
+    /// goes on a preview-only buffer around the same pixels: the published buffer is shared with the
+    /// Camera Extension sink, which cannot deserialize it.
+    private static func displayingImmediately(_ published: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let imageBuffer = published.imageBuffer, let format = published.formatDescription else { return nil }
+        var timing = CMSampleTimingInfo(
+            duration: published.duration, presentationTimeStamp: published.presentationTimeStamp, decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        guard CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault, imageBuffer: imageBuffer, formatDescription: format,
+            sampleTiming: &timing, sampleBufferOut: &sampleBuffer
+        ) == noErr, let sampleBuffer,
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
+            CFArrayGetCount(attachments) > 0
+        else { return nil }
+        let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+        CFDictionarySetValue(
+            dictionary,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+        )
+        return sampleBuffer
     }
 }
 
