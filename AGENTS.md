@@ -46,6 +46,10 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 - Don't publish measurements you didn't take; benchmarks live in `benchmarks/` with their raw output.
 - Never hand-edit or commit generated Xcode artifacts. Change `macOS/project.yml` and run `make project`.
   Identifiers come from `APP_BUNDLE_ID`/`EXTENSION_BUNDLE_ID` there; never repeat them in code or plists.
+- The Camera Extension's build number comes from `macOS/extension-version.sh` (commits touching its
+  sources); never bump it by hand, and never tie it to the app's version: replacing a running
+  extension can need a restart on macOS 27.2. Nothing in the extension may crash (no `fatalError`,
+  force unwraps or `try!`): a relaunched extension is invisible to video apps already connected.
 - The project name is Mirrorup. Never use "EOS" or "Canon" in product names (trademarks); naming the
   supported cameras in docs is fine.
 

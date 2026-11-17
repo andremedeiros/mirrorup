@@ -22,6 +22,9 @@ jobs:
       DEVELOPMENT_TEAM: ${{ vars.DEVELOPMENT_TEAM }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # macOS/extension-version.sh counts commits; a shallow clone would undercount.
+          fetch-depth: 0
 
       - name: Check tag and signing configuration
         id: version

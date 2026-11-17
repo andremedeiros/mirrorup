@@ -21,11 +21,20 @@ Everything is derived from two settings in `macOS/project.yml`:
 | `APP_BUNDLE_ID` | `cool.andre.Mirrorup` | app bundle ID, extension app group (`$(TeamIdentifierPrefix)$(APP_BUNDLE_ID)`) |
 | `EXTENSION_BUNDLE_ID` | `$(APP_BUNDLE_ID).CameraExtension` | extension bundle ID and product name, CMIO Mach service name, and the app's `MirrorupCameraExtensionBundleIdentifier` Info.plist key (read by `ExtensionManager`) |
 | `DEVELOPMENT_TEAM` | `${DEVELOPMENT_TEAM}` from the environment | signing team |
+| `EXTENSION_VERSION` | `${EXTENSION_VERSION}` from the environment (`macOS/extension-version.sh`) | the Camera Extension's `CFBundleVersion` |
 
 The Makefile derives `DEVELOPMENT_TEAM` from the organizational unit of your first "Apple Development"
 certificate. That is the team ID, which is **not** the ID in parentheses in the certificate's name.
 Override it with `make app DEVELOPMENT_TEAM=XXXXXXXXXX`. To ship your own build, change
 `APP_BUNDLE_ID` to a prefix you own.
+
+The Camera Extension has its own build number, so app-only changes never replace an installed
+extension (macOS 27.2 can lose a replaced extension until the Mac restarts). `extension-version.sh`
+prints the number of commits touching what the extension is built from (`macOS/MirrorupCameraExtension`,
+`macOS/Shared`, `macOS/project.yml`, `Sources/MirrorupDiagnostics`, the script itself). With uncommitted
+changes there it appends a hash of them, so a development build with edited extension sources
+installs, and rebuilding the same edit doesn't. The Makefile passes it to XcodeGen. Its short
+version is fixed at 1.0: the system compares both.
 
 ## Build and test
 
@@ -64,8 +73,8 @@ when streaming stops.
 ## Running the app
 
 1. `make install-app`, then launch `/Applications/Mirrorup.app` (menu bar icon). On first launch (and
-   whenever the embedded extension's build number changes) the app submits the Camera Extension
-   activation request by itself.
+   whenever the embedded extension's version changes) the app submits the Camera Extension
+   activation request by itself, then relaunches itself to connect to the new extension.
 2. Approve it in System Settings → General → Login Items & Extensions → Camera Extensions.
    On MDM-managed Macs a system-extension policy with `AllowUserOverrides = false` silently denies
    unlisted extensions. `sysextd` logs `applyPolicy … -> Deny: extension's teamID and identifier are
@@ -91,8 +100,9 @@ xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 Pushing a tag `vMAJOR.MINOR[.PATCH]` runs `.github/workflows/release.yml` on GitHub's `xcode-27`
 runner (Xcode 27.2). It runs `make build test`, archives the app signed with Developer ID, notarizes
 and staples it, and attaches `Mirrorup-<version>.zip` to a GitHub release with generated notes. The
-version comes from the tag (`MARKETING_VERSION`), the build number from the workflow run number
-(`CURRENT_PROJECT_VERSION`). A different build number makes installed apps replace the extension.
+version comes from the tag (`MARKETING_VERSION`), the app's build number from the workflow run number
+(`CURRENT_PROJECT_VERSION`), the extension's from its own history (above; the checkout fetches the
+full history for it). Installed apps replace the extension only when that number changes.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

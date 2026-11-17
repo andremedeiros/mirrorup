@@ -11,6 +11,10 @@ DEVELOPMENT_TEAM ?= $(shell security find-certificate -c "Apple Development" -p 
 	| awk -F' = ' '/organizationalUnitName/ { print $$2; exit }')
 export DEVELOPMENT_TEAM
 
+# The Camera Extension's bundle version: changes only when its sources do (macOS/extension-version.sh).
+EXTENSION_VERSION ?= $(shell macOS/extension-version.sh)
+export EXTENSION_VERSION
+
 all: build test
 
 ## Swift package: libraries + `mirrorup` CLI
@@ -32,9 +36,10 @@ test-hardware:
 ## Generate macOS/Mirrorup.xcodeproj, Info.plists and entitlements from macOS/project.yml
 project:
 	@test -n "$(DEVELOPMENT_TEAM)" || { echo "error: no Apple Development certificate found; pass DEVELOPMENT_TEAM=<team id>"; exit 1; }
+	@test -n "$(EXTENSION_VERSION)" || { echo "error: macOS/extension-version.sh printed nothing (needs a git checkout)"; exit 1; }
 	@command -v xcodegen >/dev/null || { echo "error: xcodegen not installed (brew install xcodegen)"; exit 1; }
 	cd macOS && xcodegen generate
-	@echo "signing team: $(DEVELOPMENT_TEAM)"
+	@echo "signing team: $(DEVELOPMENT_TEAM), extension version: $(EXTENSION_VERSION)"
 
 ## Menu bar app + Camera Extension (Debug, automatically signed)
 app: project
