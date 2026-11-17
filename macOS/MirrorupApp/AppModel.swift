@@ -514,12 +514,24 @@ final class AppModel {
 
     // MARK: Derived UI state
 
-    enum MenuBarIcon: String {
-        case stopped = "video.slash"
-        case streamingToVirtualCamera = "video.fill"
-        case streaming = "video"
-        case failed = "exclamationmark.triangle"
-        case working = "video.badge.ellipsis"
+    enum MenuBarIcon {
+        case stopped
+        case streamingToVirtualCamera
+        case streaming
+        case failed
+        case working
+
+        /// The iris is closed while the camera is off, swings half open while connecting, and is
+        /// fully open while live; the dot means the picture is going out to other apps.
+        var glyph: MenuBarSymbol.Glyph {
+            switch self {
+            case .stopped: MenuBarSymbol.Glyph(opening: 0, lit: false, badge: .none)
+            case .working: MenuBarSymbol.Glyph(opening: 0.5, lit: false, badge: .ellipsis)
+            case .streaming: MenuBarSymbol.Glyph(opening: 1, lit: false, badge: .none)
+            case .streamingToVirtualCamera: MenuBarSymbol.Glyph(opening: 1, lit: true, badge: .none)
+            case .failed: MenuBarSymbol.Glyph(opening: 0, lit: false, badge: .exclamation)
+            }
+        }
 
         var accessibilityValue: String {
             switch self {

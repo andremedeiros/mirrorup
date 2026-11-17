@@ -13,7 +13,7 @@ struct MirrorupApp: App {
         MenuBarExtra {
             MenuView(model: appDelegate.model)
         } label: {
-            Image(systemName: appDelegate.model.menuBarIcon.rawValue)
+            MenuBarLabel(glyph: appDelegate.model.menuBarIcon.glyph)
                 .accessibilityLabel("Mirrorup")
                 .accessibilityValue(appDelegate.model.menuBarIcon.accessibilityValue)
         }
