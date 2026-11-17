@@ -86,6 +86,50 @@ log stream --predicate 'subsystem == "cool.andre.Mirrorup"' --level debug
 xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 ```
 
+## Releases
+
+Pushing a tag `vMAJOR.MINOR[.PATCH]` runs `.github/workflows/release.yml` on GitHub's `xcode-27`
+runner (Xcode 27.2). It runs `make build test`, archives the app signed with Developer ID, notarizes
+and staples it, and attaches `Mirrorup-<version>.zip` to a GitHub release with generated notes. The
+version comes from the tag (`MARKETING_VERSION`), the build number from the workflow run number
+(`CURRENT_PROJECT_VERSION`). A different build number makes installed apps replace the extension.
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+One-time setup (Apple Developer Program account holder or admin):
+
+1. **Developer ID Application certificate.** Xcode → Settings → Accounts → Manage Certificates → + →
+   Developer ID Application. Export it with its private key from Keychain Access as a `.p12` with a
+   password.
+2. **Developer ID provisioning profile for the app** (the extension needs none). In Certificates,
+   Identifiers & Profiles → Profiles → +, pick Developer ID (macOS), the app ID `APP_BUNDLE_ID`
+   (registered with the System Extension capability by the first `make app`) and the certificate
+   from step 1. Download it.
+3. **Notarization key.** App Store Connect → Users and Access → Integrations → Team Keys → +
+   (Developer access is enough). Download the `.p8` (only possible once) and note the key ID and
+   issuer ID.
+4. **Repository secrets and variable** (the workflow names any that are missing):
+
+   ```bash
+   gh variable set DEVELOPMENT_TEAM --body XXXXXXXXXX   # team ID: the certificate's OU
+   base64 -i DeveloperID.p12 | gh secret set DEVELOPER_ID_CERTIFICATE_P12
+   gh secret set DEVELOPER_ID_CERTIFICATE_PASSWORD
+   base64 -i Mirrorup_Developer_ID.provisionprofile | gh secret set APP_PROVISIONING_PROFILE
+   base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set NOTARY_API_KEY
+   gh secret set NOTARY_API_KEY_ID
+   gh secret set NOTARY_API_ISSUER_ID
+   ```
+
+The workflow signs manually: it passes the profile's name as `MIRRORUP_APP_PROFILE`, which the app
+target's `PROVISIONING_PROFILE_SPECIFIER` reads (empty locally, so local builds keep automatic
+signing). Bundle IDs are read from the profile, never repeated in the workflow.
+
+Upgrading an installed copy replaces the running extension, which macOS 27.2 can fail to relaunch
+(see `AGENTS.md`). The app relaunches itself and, if the camera still doesn't appear, asks for a
+restart; video apps that were open may need reopening.
+
 ## Fixtures
 
 `Tests/*/Fixtures/*-sl2.bin` are raw data phases captured from the real SL2 via ImageCaptureCore
