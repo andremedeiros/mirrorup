@@ -25,6 +25,10 @@ extension CanonProperty {
     public static let focusModeManual: UInt32 = 0x03
     /// LensStatus 0: no lens attached.
     public static let lensNotAttached: UInt32 = 0x00
+    /// FixedMovie (EDSDK kEdsPropID_FixedMovie, ptp.h EOS_FixedMovie): 1 while the body is in movie
+    /// mode (power switch on the movie position, or MovieSelectSWOn from an application).
+    public static let movieMode: UInt32 = 0xD1C2
+    public static let movieModeOn: UInt32 = 0x01
 
     /// The property a user setting writes.
     public static func code(for setting: CameraSetting) -> UInt32 {
@@ -41,23 +45,49 @@ extension CanonProperty {
     }
 }
 
-/// Why a RemoteReleaseOn full press did not fire, from its first response parameter. Codes 1, 3, 7 and
-/// 8 are libgphoto2's EOS capture results (library.c camera_trigger_canon_eos_capture); 6 follows the
-/// same numbering in Canon's EDSDK TakePicture errors (EDS_ERR_TAKE_PICTURE_*, 0x8D01 + n − 1).
-public enum CanonReleaseFailure: UInt32, Sendable {
-    case focusFailed = 1
-    case mirrorUp = 3
-    case noCard = 6
-    case cardError = 7
-    case cardWriteProtected = 8
+/// Why the camera did not release the shutter: the first response parameter of RemoteReleaseOn (or
+/// EOS Capture 0x910F). The values are the low byte of Canon EDSDK's TakePicture errors
+/// (EDS_ERR_TAKE_PICTURE_*, 0x00008D01 upwards, in the order the EDSDK reference lists them).
+/// libgphoto2's EOS capture results 1 (no focus), 3 (mirror up), 7 (card full) and 8 (card read-only)
+/// match that numbering (library.c camera_trigger_canon_eos_capture). 2 is EDSDK "reserved".
+public enum CanonReleaseFailure: UInt32, Sendable, CaseIterable {
+    case focusFailed = 0x01
+    case mirrorUp = 0x03
+    case sensorCleaning = 0x04
+    case silentOperation = 0x05
+    case noCard = 0x06
+    case cardError = 0x07
+    case cardWriteProtected = 0x08
+    case movieCrop = 0x09
+    case flashCharging = 0x0A
+    case noLens = 0x0B
+    case specialMovieMode = 0x0C
+    case liveViewReleaseProhibited = 0x0D
+    case movieMode = 0x0E
+    case lensRetracted = 0x0F
 
-    var message: String {
+    static let movieModeMessage = "The camera's power switch is on movie mode. Move it to ON to take photos."
+    static let movieModeStuckMessage = "The camera refused the photo as if it were in movie mode. If its power switch is already on ON, turn it to the movie position and back to ON."
+    static let noSpaceMessage = "The camera has no room for photos. Check its memory card."
+    static let unexplainedMessage = "The camera did not take the photo. Check the camera's screen for a message."
+
+    /// User-facing text. The SL2 kept answering 0xC with 0xD1C2 = 0 until its power switch was cycled
+    /// (movie position and back to ON; docs/canon-eos-ptp.md §11.6), hence the second movie message.
+    func message(inMovieMode: Bool) -> String {
         switch self {
         case .focusFailed: "The camera could not focus, so it did not take the photo."
         case .mirrorUp: "The camera's mirror is locked up. Turn off mirror lockup to take photos."
+        case .sensorCleaning: "The camera is cleaning its sensor. Try again in a moment."
+        case .silentOperation: "The camera is busy with another operation. Try again in a moment."
         case .noCard: "Insert a memory card to take photos."
-        case .cardError: "The camera could not write to its memory card. Check the card's free space."
+        case .cardError: "The camera could not write to its memory card. Check that the card isn't full."
         case .cardWriteProtected: "The memory card is locked. Unlock it to take photos."
+        case .movieCrop: "The camera can't take photos while movie crop is on."
+        case .flashCharging: "The flash is still charging. Try again in a moment."
+        case .noLens: "Attach a lens to take photos."
+        case .specialMovieMode, .movieMode: inMovieMode ? Self.movieModeMessage : Self.movieModeStuckMessage
+        case .liveViewReleaseProhibited: "The camera can't take photos from live view in this shooting mode."
+        case .lensRetracted: "The lens is retracted. Extend it to take photos."
         }
     }
 }
@@ -90,16 +120,28 @@ extension CanonCamera: CameraControlling {
             // 10× set on the camera body streams the same image as 5×.
             zoom = latestFrame?.metadata.magnification.map { CameraZoom(rawValue: Int($0)) ?? .x5 } ?? .x1
         }
+        let reason = photoUnavailableReason(shots: shots)
         return CameraControlState(
             settings: settings,
             canAutofocus: canAutofocus,
             canFocusAtPoint: canFocusAtPoint,
             zoom: zoom,
             canCapturePhoto: isConnected && supports(CanonOperation.remoteReleaseOn) && supports(CanonOperation.remoteReleaseOff)
-                && shots.map { $0 > 0 } ?? true,
+                && reason == nil,
+            photoUnavailableReason: reason,
             battery: battery.flatMap { CanonCatalog.optionTitle(property: CanonProperty.batteryPower, value: $0) },
             batteryIsLow: battery == CanonValueTables.batteryLevelLow,
             shotsRemaining: shots.map(Int.init))
+    }
+
+    /// True while the body reports movie mode (0xD1C2 = 1): the power switch is on the movie position.
+    var isInMovieMode: Bool { propertyValue(CanonProperty.movieMode) == CanonProperty.movieModeOn }
+
+    /// The camera-side reason a photo can't be taken, from the cached properties; nil when none is known.
+    func photoUnavailableReason(shots: UInt32?) -> String? {
+        if isInMovieMode { return CanonReleaseFailure.movieModeMessage }
+        if shots == 0 { return CanonReleaseFailure.noSpaceMessage }
+        return nil
     }
 
     /// Current value and the camera's allowed values for one setting; nil when the camera never
@@ -198,20 +240,31 @@ extension CanonCamera: CameraControlling {
     /// magnifier gets the command once more.
     private func moveMagnifier(to origin: (x: UInt32, y: UInt32), from before: CanonViewfinderMetadata.Rect?,
                                action: ControlAction) async throws {
-        for attempt in 1...2 {
-            let result = try await session.transact(PTPCommand(CanonOperation.zoomPosition, [origin.x, origin.y]),
-                                                    timeout: options.commandTimeout)
-            guard result.response.code == .ok else {
-                throw Self.refusal(result.response.code, action: action, context: "ZoomPosition \(origin.x),\(origin.y)")
-            }
-            // The frames show the move ~100 ms later; AF before that would focus at the old point.
-            let moved = await waitForFrame(timeout: options.frameConfirmationTimeout) { m in
-                guard let rect = m.magnifierRect else { return false }
-                return rect != before || Self.isNear(rect, origin)
-            }
-            if moved { return }
-            Diagnostics.canon.notice("ZoomPosition \(origin.x),\(origin.y) not reflected in frames (attempt \(attempt))")
+        // The frames show the move ~100 ms later; AF before that would focus at the old point.
+        _ = try await sendConfirmed(PTPCommand(CanonOperation.zoomPosition, [origin.x, origin.y]), action: action,
+                                    context: "ZoomPosition \(origin.x),\(origin.y)") { m in
+            guard let rect = m.magnifierRect else { return false }
+            return rect != before || Self.isNear(rect, origin)
         }
+    }
+
+    /// Sends a no-data command and waits for live-view frames to show its effect; sends it once more
+    /// when they don't. The SL2 answers OK but silently ignores ZoomPosition and Zoom sent shortly after
+    /// an AF cycle (verified for both). Returns whether the effect showed.
+    private func sendConfirmed(_ command: PTPCommand, action: ControlAction, context: String,
+                               _ condition: (CanonViewfinderMetadata) -> Bool) async throws -> Bool {
+        for attempt in 1...2 {
+            let result = try await session.transact(command, timeout: options.commandTimeout)
+            guard result.response.code == .ok else {
+                throw Self.refusal(result.response.code, action: action, context: context)
+            }
+            let before = sequence
+            if await waitForFrame(timeout: options.frameConfirmationTimeout, condition) { return true }
+            // No frames at all (nobody is streaming): nothing contradicts the camera's OK.
+            if sequence == before { return true }
+            Diagnostics.canon.notice("\(context, privacy: .public) not reflected in frames (attempt \(attempt))")
+        }
+        return false
     }
 
     /// DoAf, wait for the AF result, then AfCancel. DoAf returns on acceptance; the body then holds AF
@@ -283,13 +336,13 @@ extension CanonCamera: CameraControlling {
                                                  size: Self.magnifierSize(metadata: metadata)) {
                 try await moveMagnifier(to: origin, from: metadata.magnifierRect, action: .zoom)
             }
-            let r = try await session.transact(PTPCommand(CanonOperation.zoom, [UInt32(zoom.rawValue)]),
-                                               timeout: options.commandTimeout)
-            guard r.response.code == .ok else {
-                throw Self.refusal(r.response.code, action: .zoom, context: "Zoom \(zoom.rawValue)")
+            // The live-view JPEG changes size with the magnification (960×640 → 1200×800 on the SL2).
+            let changed = try await sendConfirmed(PTPCommand(CanonOperation.zoom, [UInt32(zoom.rawValue)]), action: .zoom,
+                                                  context: "Zoom \(zoom.rawValue)") { $0.magnification == UInt32(zoom.rawValue) }
+            if !changed, isLiveView {
+                throw CameraError(.protocolViolation, "The camera did not change the zoom. Try again in a moment.",
+                                  detail: "Zoom \(zoom.rawValue) answered OK twice but frames kept magnification \(latestFrame?.metadata.magnification.map(String.init) ?? "unknown")")
             }
-            // The live-view JPEG changes size with the magnification (1024×576 → 1200×800 on the SL2).
-            await waitForFrame(timeout: options.frameConfirmationTimeout) { $0.magnification == UInt32(zoom.rawValue) }
             try await drainEvents()
         } catch {
             throw Self.controlError(error, context: "zoom \(zoom.rawValue)x")
@@ -307,12 +360,16 @@ extension CanonCamera: CameraControlling {
         guard !shutterCycleActive else {
             throw CameraError(.protocolViolation, "A photo is already being taken.")
         }
+        if let reason = photoUnavailableReason(shots: propertyValue(CanonProperty.availableShots)) {
+            throw CameraError(.protocolViolation, reason,
+                              detail: "FixedMovie 0xD1C2 = \(propertyValue(CanonProperty.movieMode).map { Self.hex($0) } ?? "unknown"), AvailableShots = \(propertyValue(CanonProperty.availableShots).map(String.init) ?? "unknown")")
+        }
         do {
             // The capture destination is left as the user set it; the file lands on the card.
             let storage = try await session.execute(PTPCommand(CanonOperation.getStorageIDs), timeout: options.commandTimeout)
             var reader = PTPDataReader(storage.data)
             guard !(try reader.u32Array()).isEmpty else {
-                throw CameraError(.protocolViolation, CanonReleaseFailure.noCard.message, detail: "GetStorageIDs returned no storage")
+                throw CameraError(.protocolViolation, CanonReleaseFailure.noCard.message(inMovieMode: false), detail: "GetStorageIDs returned no storage")
             }
             try await drainEvents()
             collectedObjects = []
@@ -323,6 +380,7 @@ extension CanonCamera: CameraControlling {
             }
             try await releaseShutter()
             let object = try await waitForNewObject()
+            Diagnostics.canon.info("new object \(Self.hex(object.handle), privacy: .public) storage \(Self.hex(object.storageID), privacy: .public) format \(Self.hex(object.format), privacy: .public) size \(object.size) name '\(object.filename, privacy: .public)'")
             let download = try await session.transact(PTPCommand(.getObject, [object.handle]), timeout: options.photoDownloadTimeout)
             guard download.response.code == .ok, !download.data.isEmpty else {
                 throw CameraError(.protocolViolation, "The photo could not be copied from the camera.",
@@ -347,8 +405,10 @@ extension CanonCamera: CameraControlling {
     /// (libgphoto2 camera_trigger_canon_eos_capture, regular EOS path).
     private func releaseShutter() async throws {
         let half = try await session.transact(PTPCommand(CanonOperation.remoteReleaseOn, [1, 0]), timeout: options.commandTimeout)
-        guard half.response.code == .ok else {
-            throw Self.refusal(half.response.code, action: .takePhoto, context: "RemoteReleaseOn half press")
+        if let failure = Self.releaseFailure(half.response, press: "half press", inMovieMode: isInMovieMode) {
+            // A refused half press can still leave the button state set; let go of it.
+            _ = try? await session.transact(PTPCommand(CanonOperation.remoteReleaseOff, [1]), timeout: options.commandTimeout)
+            throw failure
         }
         var failure: (any Error)?
         do {
@@ -359,11 +419,7 @@ extension CanonCamera: CameraControlling {
                 try await Task.sleep(for: .milliseconds(50))
             }
             let full = try await session.transact(PTPCommand(CanonOperation.remoteReleaseOn, [2, 0]), timeout: options.commandTimeout)
-            if full.response.code != .ok {
-                failure = Self.refusal(full.response.code, action: .takePhoto, context: "RemoteReleaseOn full press")
-            } else if let result = full.response.parameters.first, result != 0 {
-                failure = Self.releaseFailure(result)
-            }
+            failure = Self.releaseFailure(full.response, press: "full press", inMovieMode: isInMovieMode)
             let fullOff = try await session.transact(PTPCommand(CanonOperation.remoteReleaseOff, [2]), timeout: options.commandTimeout)
             if fullOff.response.code != .ok {
                 Diagnostics.canon.notice("RemoteReleaseOff(2) -> \(CanonResponse.describe(fullOff.response.code), privacy: .public)")
@@ -539,13 +595,21 @@ extension CanonCamera: CameraControlling {
         }
     }
 
-    static func releaseFailure(_ result: UInt32) -> CameraError {
-        let detail = "RemoteReleaseOn full press result \(hex(result))"
-        if let failure = CanonReleaseFailure(rawValue: result) {
-            return CameraError(.protocolViolation, failure.message, detail: detail)
+    /// The outcome of a RemoteReleaseOn: nil when the camera accepted it. The result parameter wins
+    /// over the response code: with live view off the SL2 answered a half press with DeviceBusy and
+    /// result 1 (focus failed) after 5 s.
+    static func releaseFailure(_ response: PTPResponse, press: String, inMovieMode: Bool) -> CameraError? {
+        let result = response.parameters.first ?? 0
+        var detail = "RemoteReleaseOn \(press): \(CanonResponse.describe(response.code)), result \(hex(result))"
+        if result != 0 {
+            guard let failure = CanonReleaseFailure(rawValue: result) else {
+                return CameraError(.protocolViolation, CanonReleaseFailure.unexplainedMessage, detail: detail)
+            }
+            detail += " (\(failure))"
+            return CameraError(.protocolViolation, failure.message(inMovieMode: inMovieMode), detail: detail)
         }
-        // The SL2 answers 0xC in every mode tried; no reference names it (docs §11.6).
-        return CameraError(.protocolViolation, "The camera did not take the photo. Check the camera's screen for a message.", detail: detail)
+        guard response.code == .ok else { return refusal(response.code, action: .takePhoto, context: detail) }
+        return nil
     }
 
     static func controlError(_ error: any Error, context: String) -> CameraError {

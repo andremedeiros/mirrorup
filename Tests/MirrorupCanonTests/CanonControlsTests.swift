@@ -36,6 +36,15 @@ private func streaming() async throws -> (CanonCamera, SimulatedSL2) {
     return (camera, sim)
 }
 
+/// The fixture was captured with the power switch on movie mode (0xD1C2 = 1) and 0 shots left; this
+/// reports what the body sends with the switch on ON and a card with room.
+private func readyForStills(_ camera: CanonCamera, _ sim: SimulatedSL2) async {
+    sim.state.withLock {
+        $0.pendingEvents.append(events([(CanonEvent.propValueChanged, [0xD1C2, 0]), (CanonEvent.propValueChanged, [0xD11B, 5221])]))
+    }
+    _ = await camera.controlState()
+}
+
 private func events(_ records: [(code: UInt32, body: [UInt32])]) -> Data {
     var w = PTPDataWriter()
     for record in records {
@@ -93,7 +102,8 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         #expect(state.battery == "100%")
         #expect(!state.batteryIsLow)
         #expect(state.shotsRemaining == 0)
-        #expect(!state.canCapturePhoto)  // 0 shots remaining in the fixture
+        #expect(!state.canCapturePhoto)
+        #expect(state.photoUnavailableReason == "The camera's power switch is on movie mode. Move it to ON to take photos.")
         // Not streaming: no AF, no zoom.
         #expect(!state.canAutofocus && !state.canFocusAtPoint)
         #expect(state.zoom == nil)
@@ -198,10 +208,25 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         _ = try await camera.set(.autofocusMethod, to: 1)
         _ = try await camera.setZoom(.x5, center: CGPoint(x: 0.25, y: 0.5))
         let commands = sim.state.withLock { $0.commands }.filter { $0.0 == 0x9159 || $0.0 == 0x9158 }
-        // No frame shows the magnifier moving (nothing streams here), so ZoomPosition is sent once more.
-        #expect(commands.map(\.0) == [0x9159, 0x9159, 0x9158])
+        // Nothing streams here, so no frame contradicts the camera's OK: each command is sent once.
+        #expect(commands.map(\.0) == [0x9159, 0x9158])
         #expect(commands.first?.1 == [897, 1581])
         #expect(commands.last?.0 == 0x9158 && commands.last?.1 == [5])
+    }
+
+    @Test func zoomIgnoredByTheCameraIsResentOnceThenReported() async throws {
+        let (camera, sim) = try await streaming()
+        _ = try await camera.set(.autofocusMethod, to: 1)
+        // Frames keep flowing, but the simulator never magnifies (its frames always report 1×).
+        let frames = Task { while !Task.isCancelled { _ = try? await camera.nextFrame(); try? await Task.sleep(for: .milliseconds(5)) } }
+        defer { frames.cancel() }
+        do {
+            _ = try await camera.setZoom(.x5, center: nil)
+            Issue.record("expected an error")
+        } catch {
+            #expect(error.message == "The camera did not change the zoom. Try again in a moment.")
+        }
+        #expect(sim.state.withLock { $0.log.filter { $0 == 0x9158 }.count } == 2)
     }
 
     @Test func zoomIsRefusedInFaceTrackingWithoutSending() async throws {
@@ -212,6 +237,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
 
     @Test func captureReleasesWaitsForTheFileAndDownloadsIt() async throws {
         let (camera, sim) = try await streaming()
+        await readyForStills(camera, sim)
         let jpeg = Data([0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9])
         sim.state.withLock { s in
             s.objectEventOnRelease = objectAddedRecord(handle: 0x9000_0042, storage: 0x0002_0001, format: 0x3801,
@@ -231,12 +257,16 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
 
     @Test func refusedReleaseLetsGoOfTheShutterAndReports() async throws {
         let (camera, sim) = try await streaming()
+        await readyForStills(camera, sim)
         sim.state.withLock { $0.releaseResult = 0xC }
         do {
             _ = try await camera.capturePhoto()
             Issue.record("expected a refusal")
         } catch {
-            #expect(error.detail?.contains("0xC") == true)
+            // 0xC is EDSDK SPECIAL_MOVIE_MODE_NG; the SL2 kept answering it with 0xD1C2 = 0 until the
+            // power switch was cycled.
+            #expect(error.detail?.contains("0xC (specialMovieMode)") == true)
+            #expect(error.message == "The camera refused the photo as if it were in movie mode. If its power switch is already on ON, turn it to the movie position and back to ON.")
         }
         let commands = sim.state.withLock { $0.commands }
         #expect(commands.contains { $0.0 == 0x9129 && $0.1 == [2] })
@@ -252,9 +282,37 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         }
     }
 
+    @Test func movieModeBlocksCaptureBeforeThePress() async throws {
+        let (camera, sim) = try await streaming()  // fixture: 0xD1C2 = 1
+        do {
+            _ = try await camera.capturePhoto()
+            Issue.record("expected an error")
+        } catch {
+            #expect(error.message == "The camera's power switch is on movie mode. Move it to ON to take photos.")
+        }
+        #expect(!sim.state.withLock { $0.log.contains(0x9128) })
+    }
+
+    @Test func releaseResultsDecodeToSpecificMessages() {
+        func failure(_ code: PTPResponseCode, _ result: UInt32, movie: Bool = false) -> CameraError? {
+            CanonCamera.releaseFailure(PTPResponse(code: code, transactionID: 1, parameters: [result]), press: "full press", inMovieMode: movie)
+        }
+        #expect(failure(.ok, 0) == nil)
+        #expect(failure(.ok, 7)?.message == "The camera could not write to its memory card. Check that the card isn't full.")
+        #expect(failure(.ok, 8)?.message == "The memory card is locked. Unlock it to take photos.")
+        #expect(failure(.ok, 0x0B)?.message == "Attach a lens to take photos.")
+        #expect(failure(.ok, 0x0C, movie: true)?.message == "The camera's power switch is on movie mode. Move it to ON to take photos.")
+        // SL2 with live view off: DeviceBusy after 5 s with result 1; the result explains it.
+        #expect(failure(.deviceBusy, 1)?.message == "The camera could not focus, so it did not take the photo.")
+        #expect(failure(.deviceBusy, 0)?.message == "The camera is busy and did not take the photo. Try again in a moment.")
+        #expect(failure(.ok, 2)?.message == "The camera did not take the photo. Check the camera's screen for a message.")
+        #expect(failure(.ok, 2)?.detail?.contains("result 0x2") == true)
+    }
+
     @Test func captureWithoutACardDoesNotPressTheShutter() async throws {
         let (camera, sim) = try makeControlledCamera()
         try await camera.connect()
+        await readyForStills(camera, sim)
         sim.state.withLock { $0.storageIDs = [] }
         do {
             _ = try await camera.capturePhoto()
@@ -269,7 +327,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         // Battery and shots arrive later through GetEvent; the state follows the cache on demand.
         let (camera, sim) = try makeControlledCamera()
         try await camera.connect()
-        sim.state.withLock { $0.pendingEvents.append(events([(CanonEvent.propValueChanged, [0xD111, 0]), (CanonEvent.propValueChanged, [0xD11B, 812])])) }
+        sim.state.withLock { $0.pendingEvents.append(events([(CanonEvent.propValueChanged, [0xD111, 0]), (CanonEvent.propValueChanged, [0xD11B, 812]), (CanonEvent.propValueChanged, [0xD1C2, 0])])) }
         let state = await camera.controlState()
         #expect(state.battery == "Low" && state.batteryIsLow)
         #expect(state.shotsRemaining == 812)

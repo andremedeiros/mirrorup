@@ -11,6 +11,12 @@ struct CameraControlsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             QuickControls(model: model)
+            if let reason = model.controlState?.photoUnavailableReason {
+                Label(reason, systemImage: "camera.badge.ellipsis")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             PictureControls(model: model)
             if let message = model.controlMessage {
                 ControlMessageView(message: message)

@@ -491,7 +491,7 @@ latest parsed live-view frame.
 | canAutofocus | live view, `0x9154` listed, `0xD1A8` ≠ 0 (lens), `0xD108` ≠ 3 (lens switch not at MF) | | Ops listed: **Verified**; MF rule **Ext(FC.SDK)** |
 | canFocusAtPoint | canAutofocus, `0x9159` listed, AF method = 1-point (`1`), frame geometry known | | **Verified** (§11.4) |
 | zoom | magnification from block `0x4`, nil when not in live view, `0x9158` not listed, or AF method = Face + Tracking | | **Verified** (§11.5) |
-| canCapturePhoto | `0x9128`/`0x9129` listed and `0xD11B` > 0 | Capture does not work on the SL2 yet (§11.6) | **Verified** (listed) |
+| canCapturePhoto / photoUnavailableReason | `0x9128`/`0x9129` listed, `0xD1C2` ≠ 1 (not movie mode) and `0xD11B` > 0; otherwise a reason sentence | Capture works in stills mode (§11.6, §11.7) | **Verified** |
 
 Allowed lists by mode (**Verified**):
 
@@ -602,46 +602,147 @@ magnification.
 Timings with the full implementation, frame confirmation included: 0.42–1.44 s per `setZoom`.
 **Verified**
 
-### 11.6 Photo capture: does not fire on the SL2 yet
+### 11.6 Photo capture
 
 Implemented sequence, after libgphoto2's regular-EOS path (**Ref(`library.c`:`camera_trigger_canon_eos_capture`, `camera_canon_eos_capture`)**):
 
-1. GetStorageIDs `0x9101`. An empty list gives "Insert a memory card to take photos." without
-   pressing the shutter. Capture destination `0xD11C` is left as the user set it (2 = card).
+1. Refuse up front, without pressing anything, when the body is in movie mode (`0xD1C2` = 1, §11.7)
+   or reports 0 shots left (`0xD11B`). Then GetStorageIDs `0x9101`; an empty list gives "Insert a
+   memory card to take photos." Capture destination `0xD11C` is left as the user set it (2 = card).
 2. Drain GetEvent, start collecting ObjectAdded/RequestObjectTransfer records, and suspend frame
    polling and the frame timeout (`shutterCycleActive`).
 3. RemoteReleaseOn `0x9128`(1, 0) half press, then GetEvent for 600 ms while AF/AE settle.
-4. RemoteReleaseOn(2, 0) full press. A non-zero first response parameter means the release failed.
-   Then RemoteReleaseOff `0x9129`(2) and RemoteReleaseOff(1), also after a failure, so the body is
-   never left half-pressed.
+4. RemoteReleaseOn(2, 0) full press. A non-zero first response parameter means the release failed
+   (decoded below). Then RemoteReleaseOff `0x9129`(2) and RemoteReleaseOff(1), also after a
+   failure, so the body is never left half-pressed.
 5. Wait up to 15 s for `0xC181`/`0xC1A7` (card) or `0xC186`/`0xC1A9` (RAM). Then GetObject
    `0x1009`(handle) with a 60 s timeout. TransferComplete `0x9117` is sent only for RAM objects
    (storage 0), as libgphoto2 does. The file name comes from the record, or from GetObjectInfo when
    the record has none.
 
-Steps 1–4 ran on the SL2. Step 5 never could: **the SL2 never released the shutter.**
+#### Release result codes
 
-| Attempt (live view on unless stated) | Response | Provenance |
+The first response parameter of RemoteReleaseOn and of EOS Capture `0x910F` is the low byte of
+Canon EDSDK's TakePicture errors (`EDS_ERR_TAKE_PICTURE_*` = `0x00008D00` + n). libgphoto2's EOS
+capture results 1, 3, 7 and 8 have the same meanings. **Ref(`library.c`:`camera_trigger_canon_eos_capture`)**;
+values 1–8 **Ext(Canon.Eos.Framework `EDSDK.cs`)**; values 9–0xF follow the order of the EDSDK reference's TakePicture
+error list (**Ext(EDSDK API reference 3.2.13)**, numeric values not seen in a header: **Hyp**).
+
+| Result | EDSDK name | `capturePhoto()` message |
 |---|---|---|
-| GetStorageIDs `0x1004` / `0x9101` | `0x2001`, `[0x00020001]`; GetStorageInfo answers 36 bytes | **Verified** |
-| RemoteReleaseOn(1,0) | `0x2001`, parameter 0; AF/AE events follow; the AF frame reaches `0x11` (focused) in 1-point AF | **Verified** |
-| RemoteReleaseOn(2,0) | `0x2001`, **parameter `0xC`**; no ObjectAdded, no CameraStatusChanged, `0xD11B` unchanged | **Verified** (Scene Intelligent Auto and P) |
-| RemoteReleaseOn(3,0) and (3,1) (full press with AF / MF) | `0x2001`, parameter `0xC` | **Verified** |
-| EOS Capture `0x910F` | `0x2001`, parameter `0xC` | **Verified** |
-| After SetUILock `0x911B`, or after SetRequestOLCInfoGroup `0x913D`(`0x1FFF`) | `0x2001`, parameter `0xC` | **Verified** |
-| Live view off (`0xD1B0` = 0): RemoteReleaseOn(1,0) | `0x2019` after 5.0 s, parameter 1; full press `0x2019` | **Verified** |
-| RemoteReleaseOff(2) / (1) / (3) | `0x2001` | **Verified** |
+| 1 | AF_NG | The camera could not focus, so it did not take the photo. |
+| 2 | RESERVED | (unexplained; code in `detail`) |
+| 3 | MIRROR_UP_NG | The camera's mirror is locked up… |
+| 4 | SENSOR_CLEANING_NG | The camera is cleaning its sensor… |
+| 5 | SILENCE_NG | The camera is busy with another operation… |
+| 6 | NO_CARD_NG | Insert a memory card to take photos. |
+| 7 | CARD_NG | The camera could not write to its memory card… |
+| 8 | CARD_PROTECT_NG | The memory card is locked… |
+| 9 | MOVIE_CROP_NG | The camera can't take photos while movie crop is on. |
+| 0xA | STROBO_CHARGE_NG | The flash is still charging… |
+| 0xB | NO_LENS_NG | Attach a lens to take photos. |
+| 0xC | SPECIAL_MOVIE_MODE_NG | Power-switch advice only while `0xD1C2` = 1; otherwise unexplained (see below) |
+| 0xD | LV_REL_PROHIBIT_MODE_NG | The camera can't take photos from live view in this shooting mode. |
+| 0xE | MOVIE_MODE_NG | as 0xC |
+| 0xF | RETRACTED_LENS_NG | The lens is retracted… |
 
-State of the camera during these attempts: card present (5221 shots, `0xD11C` = 2, allowed
-`2, 6, 4`), battery `0xD111` = 2 (100%), lens attached (`0xD1A8` = 1), mirror lockup `0xD1BF` = 0,
-AF mode `0xD108` = 2 in Scene Intelligent Auto / 0 in P. No public source names release result
-`0xC`: libgphoto2 knows 1 (no focus), 3 (mirror up), 7 (card full) and 8 (card read-only). What the
-rear screen showed was not recorded. Until a hardware session explains `0xC`, `capturePhoto()`
-reports "The camera did not take the photo. Check the camera's screen for a message." with the code
-in `detail`. **The download path, the object-record offsets and the suspended frame timeout are not
-verified on hardware.** The simulator tests cover them only.
+The result wins over the response code: with live view off the SL2 answered the half press with
+`0x2019` **and** result 1 after 5.0 s (AF through the viewfinder failed in a dim room). **Verified**
 
-### 11.7 What the UI must know
+#### What the SL2 did (2026-11-16 and 2026-11-17)
+
+**Working (2026-11-17, power switch ON after a physical ON → movie → ON cycle, dial on P, PC live
+view, 1-point AF, 1×), `capturePhoto()` end to end:** half press, full press (result 0), release,
+ObjectAdded, GetObject `0x1009` through the ImageCaptureCore pass-through → `IMG_0003.JPG`,
+6 580 522 bytes, `FF D8 … FF D9`, EXIF Canon EOS Rebel SL2, 6000×4000, in 1.89 s. `0xD11B` went
+5156 → 5155. Live view resumed with no frame timeout. The file name came out of the object
+handling (`CanonEventParser` record or the GetObjectInfo fallback; which one was not logged; the
+`new object …` info log now records it). **Verified**
+
+In the same session a capture at 5× on a low-contrast target answered the half press with result 1;
+`capturePhoto()` reported "The camera could not focus, so it did not take the photo." **Verified**
+
+**Before the switch cycle no release ever produced a file.** Every attempt with live view on
+answered result `0xC`:
+
+| Power switch / `0xD1C2` | Live view | Variant | Result | Provenance |
+|---|---|---|---|---|
+| movie position / 1 | PC (`0xD1B0` = 2→3) | RemoteReleaseOn (1,0) then (2,0); (3,0); (3,1); EOS Capture `0x910F`; after SetUILock `0x911B`; after SetRequestOLCInfoGroup `0x913D`(`0x1FFF`); with `0xD1B1` write (refused `0x2019`); with `0xD11C` = 4 + PCHDDCapacity `0x911A`(`0x0FFFFFFF`, `0x1000`, 1); after SetRemoteMode `0x15` | `0xC` | **Verified** |
+| movie position / 1 | rear LCD only (`0xD1B0` = 1) | (1,0), (2,0) | `0xC` | **Verified** |
+| movie position → MovieSelectSWOff `0x9134` / 0 | PC, rear LCD | (1,0), (2,0); `0x910F` | `0xC` | **Verified** |
+| moved to ON after `0x9133`/`0x9134` were sent, then `0x9134` / 0 | PC (`0xD1B0` = 2), rear LCD (`0xD1B0` = 1) | (1,0), (2,0); `0x910F`; `0xD11C` = 4 + PCHDDCapacity | `0xC` | **Verified** |
+| any / any | off (`0xD1B0` = 0) | (1,0) or (1,1)/(2,1) | `0x2019` after 5 s, result 1 (focus failed) | **Verified** |
+| ON / 0 | off, SetRemoteMode(0) | (1,0) | `0x2019` after 5 s, result 1 | **Verified** |
+| ON after ON → movie → ON cycle / 0 | PC | (1,0), (2,0) | result 0, photo saved and downloaded | **Verified** |
+
+- In the stuck state the body's own shutter button took no photo either: not while the host held
+  remote mode, and not with no host attached (viewfinder). After the user cycled the power switch
+  ON → movie → ON with no host attached, viewfinder shots worked, and so did `capturePhoto()` once
+  reconnected. **Verified** (user report + capture above)
+- **MovieSelectSWOn `0x9133` / MovieSelectSWOff `0x9134` can leave the SL2 refusing every release
+  (result `0xC`, `0xD1C2` already reading 0) until the power switch is cycled.** Our probes sent both
+  on 2026-11-16/17. Mirrorup never sends them; nobody should. **Verified**
+- Throughout: card present (StorageID `0x00020001`, `0xD11C` = 2, allowed `2, 6, 4`), battery 100%,
+  lens attached, mirror lockup off, drive mode `0xD106` = 0 (single), AF mode `0xD108` = 0
+  (One-Shot) in P.
+- OLCInfoChanged (`0xC1A5`) after every failed full press carried Button = 3 (the 0x0001 entry).
+  libgphoto2 reads 3 as a full-press failure on the EOS M2. **Ref(`library.c`:`camera_trigger_canon_eos_capture`)**
+- `capturePhoto()` messages for `0xC`/`0xE`: "The camera's power switch is on movie mode. Move it to
+  ON to take photos." while `0xD1C2` = 1; otherwise "The camera refused the photo as if it were in
+  movie mode. If its power switch is already on ON, turn it to the movie position and back to ON."
+- Not verified on hardware: RequestObjectTransfer (capture to PC RAM) and TransferComplete, RAW or
+  RAW+JPEG files, and capture while zoomed in.
+
+### 11.7 Movie mode vs stills mode
+
+`0xD1C2` (ptp.h EOS_FixedMovie, EDSDK kEdsPropID_FixedMovie) is 1 while the body is in movie mode:
+the power switch is on the movie position, or an application sent MovieSelectSWOn `0x9133`.
+MovieSelectSWOff `0x9134` returns the body to stills; EDSDK requires the hardware to be in stills
+for that. **Ref(`ptp.h`)**, **Ext(EDSDK 5.2.88, 6.9)**
+
+| | Movie mode (`0xD1C2` = 1) | Stills mode (`0xD1C2` = 0) | Provenance |
+|---|---|---|---|
+| Live-view JPEG at 1× | 1024×576 (16:9) | **960×640 (3:2)** | **Verified** |
+| Sensor size, block `0xE` | 5976×3952 | 6000×3988 | **Verified** |
+| Zoom rect, block `0x12` at 1× | 0,298 5976×3356 | 0,0 6000×3988 | **Verified** |
+| ISO `0xD103` list (P) | empty | `0, 0x48 … 0x80` (Auto, 100–6400) | **Verified** |
+| Aspect ratio `0xD194` list | none | `0, 2, 7, 1` | **Verified** |
+| Drive mode `0xD106` list | none | `0, 1, 0x10, 0x11, 7` | **Verified** |
+| EVF record status `0xD1B8` with live view on | 3 | 3 (0 with live view off) | **Verified** |
+
+- Both GetEvent fixtures report `0xD1C2` = 1. The fw 1.0.1 EVF fixture's geometry (960×640,
+  6000×3988) matches stills mode and the fw 1.1.0 one (1024×576, 5976×3952) matches movie mode.
+  **Verified** (geometry); when each was captured relative to the switch position is not recorded.
+- `0x9134` → `0xD1C2` = 0 and drops PC live view (`0xD1B0` reads 0); writing `0xD1B0` again restarts
+  it in stills. `0x9133` → back to 1. After `0x9133` and the user moving the power switch from the
+  movie position to ON, the next session still started with `0xD1C2` = 1, and `0x9134` cleared it,
+  but releases stayed refused until the switch was cycled (§11.6). **Verified**
+- `controlState()` sets `canCapturePhoto = false` and `photoUnavailableReason` = "The camera's power
+  switch is on movie mode. Move it to ON to take photos." while `0xD1C2` = 1 (or when `0xD11B` = 0:
+  "The camera has no room for photos. Check its memory card."). `capturePhoto()` refuses the same
+  way before pressing anything. Mirrorup never sends `0x9133`/`0x9134`.
+
+#### Geometry in stills mode (2026-11-17, **Verified**)
+
+| | 1× | 5× |
+|---|---|---|
+| JPEG | 960×640 | 1200×800 |
+| Block `0x12` (frame area) | 0,0 6000×3988 (whole sensor) | the 1200×800 crop |
+| Magnifier, block `0xD` | 1200×800 | 1200×800 (= the crop) |
+| 1-point AF frame, block `0x8` | **684×420** (movie mode: 1200×1200) | 396×400 |
+
+The §11.4 mapping needs no change: it reads block `0x12` and `0xD` per frame. Checked at 1×:
+`focus(at:)` (0.15, 0.2) → sent (300, 398), landed (344, 378), AF frame centred at (944, 778) for a
+target of (900, 798); (0.6, 0.45) → AF frame centred at (3576, 1802) for (3600, 1795); (1, 1) →
+clamped by the body to (4456, 2984). Results `focused` / `notFocused` (blank wall) as expected. 5×
+zoom centred lands at (2400, 1594) = the sensor centre.
+
+- Zoom(1) sent ~0.3 s after an AF cycle was answered OK and ignored once (frames stayed at 5×);
+  `setZoom` now sends Zoom and ZoomPosition once more when streaming frames contradict the OK, and
+  reports "The camera did not change the zoom. Try again in a moment." if the second is ignored too.
+  The retried Zoom(1) worked (1.4 s). **Verified**
+
+### 11.8 What the UI must know
 
 - In Scene Intelligent Auto, only the AF method is adjustable. Exposure, white balance and picture
   style have no options, and writes would be refused.
@@ -649,13 +750,14 @@ verified on hardware.** The simulator tests cover them only.
   ISO are not (empty lists). Color temperature never is on the SL2.
 - Focusing at a point and zooming need the 1-point AF method. Face + Tracking (the SL2's default)
   allows only whole-frame `autofocus()`. The UI can offer to switch the AF method first.
-- Zoom changes the stream's frame size (1024×576 at 1×, 1200×800 at 5× and 10× on the SL2). At 10×
-  the camera sends the 5× image, so the app has to crop its centre half to show 10× (the magnifier
-  rect is that area). Points for `focus(at:)` and `setZoom(center:)` are normalized to the frame the
-  camera actually sends, at every zoom level.
+- Zoom changes the stream's frame size: 1× is 960×640 in stills mode and 1024×576 in movie mode;
+  5× is 1200×800 in both. Points for `focus(at:)` and `setZoom(center:)` are normalized to the
+  frame the camera actually sends, at every zoom level.
 - `autofocus()` / `focus(at:)` return after the AF result, in 0.3–0.6 s in 1-point AF and up to 2 s
   in Face + Tracking. Run them off the main actor; frames keep flowing meanwhile.
-- `capturePhoto()` currently fails on the SL2 (§11.6). Show its `message`.
+- `capturePhoto()` takes about 2 s and returns the card file (6.6 MB Large Fine JPEG on the SL2).
+  When `canCapturePhoto` is false, show `photoUnavailableReason`; on failure show the error's
+  `message`.
 
 ## 12. Licensing
 
@@ -676,3 +778,7 @@ sources.
   https://github.com/SharpAstro/FC.SDK/blob/main/docs/canon-live-view-zoom.md
 - J. Schroden, "Remote Live View using PTP/IP on Canon EOS Cameras" (2023):
   https://julianschroden.com/post/2023-08-19-remote-live-view-using-ptp-ip-on-canon-eos-cameras
+- Canon EDSDK API Programming Reference (13.20.11): TakePicture errors 3.2.13, kEdsPropID_FixedMovie
+  5.2.88, still/movie switching 6.9.
+- Canon.Eos.Framework `EDSDK.cs` (EDSDK error constants, `EDS_ERR_TAKE_PICTURE_*` 0x8D01–0x8D08):
+  https://github.com/esskar/Canon.Eos.Framework/blob/master/Canon.Eos.Framework/Internal/SDK/EDSDK.cs

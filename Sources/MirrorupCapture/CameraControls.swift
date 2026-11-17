@@ -76,6 +76,9 @@ public struct CameraControlState: Sendable, Equatable {
     /// Current magnification, or nil when the camera cannot zoom live view.
     public var zoom: CameraZoom?
     public var canCapturePhoto: Bool
+    /// Why `canCapturePhoto` is false when the camera itself is the reason (e.g. its power switch is on
+    /// movie mode), as a user-facing sentence; nil otherwise.
+    public var photoUnavailableReason: String?
     /// Human battery level ("Full", "50%"), nil when unknown.
     public var battery: String?
     public var batteryIsLow: Bool
@@ -83,14 +86,15 @@ public struct CameraControlState: Sendable, Equatable {
 
     public init(
         settings: [CameraSetting: CameraSettingState] = [:], canAutofocus: Bool = false, canFocusAtPoint: Bool = false,
-        zoom: CameraZoom? = nil, canCapturePhoto: Bool = false, battery: String? = nil, batteryIsLow: Bool = false,
-        shotsRemaining: Int? = nil
+        zoom: CameraZoom? = nil, canCapturePhoto: Bool = false, photoUnavailableReason: String? = nil,
+        battery: String? = nil, batteryIsLow: Bool = false, shotsRemaining: Int? = nil
     ) {
         self.settings = settings
         self.canAutofocus = canAutofocus
         self.canFocusAtPoint = canFocusAtPoint
         self.zoom = zoom
         self.canCapturePhoto = canCapturePhoto
+        self.photoUnavailableReason = photoUnavailableReason
         self.battery = battery
         self.batteryIsLow = batteryIsLow
         self.shotsRemaining = shotsRemaining

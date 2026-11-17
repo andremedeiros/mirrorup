@@ -69,9 +69,23 @@ See [docs/development.md](docs/development.md) for signing, identifiers and hard
 **App:** launch `/Applications/Mirrorup.app`. On first launch it asks macOS to install the Camera
 Extension. Approve it in System Settings → General → Login Items & Extensions → Camera Extensions,
 then choose **Mirrorup Camera** in your video app. Click the menu-bar icon for the live preview, the
-streaming switch and the camera's current lens and exposure. The ⋯ menu holds Camera Info (every
-setting the camera reports, searchable), Diagnostics and Settings (camera source, start streaming at
-launch, open at login, camera extension).
+streaming switch, the camera's current lens and exposure, and camera controls:
+
+- **Focus:** the Focus button autofocuses; in the 1-point AF focus mode, clicking the preview focuses
+  there, with a square that turns green on a lock or yellow when the camera can't lock.
+- **Brightness** (exposure compensation), and under **Picture**: white balance, Picture Style, focus
+  mode, aperture/shutter/ISO when the mode allows them, live-view zoom (1×/5×, click to move the
+  zoomed area), and Mirror / Upside Down.
+- **Battery** level and **Take Photo**: a full-resolution photo, saved to Pictures › Mirrorup (it
+  also stays on the camera's card).
+
+Controls show only what the camera allows in its current mode. The green Scene Intelligent Auto
+mode allows only the focus mode; P adds brightness, white balance and Picture Style. With the power
+switch on the movie (camcorder) position the camera streams 16:9, offers fewer settings and refuses
+photos; Mirrorup says so in the popover.
+
+The ⋯ menu holds Camera Info (every setting the camera reports, searchable), Diagnostics and
+Settings (camera source, start streaming at launch, open at login, camera extension).
 
 **CLI:**
 
@@ -96,6 +110,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |
 | "The camera is in use by another app" | Quit Photos, Image Capture, EOS Utility or EOS Webcam Utility. |
 | Mirrorup Camera missing from apps | Check `systemextensionsctl list`. Approve the extension in System Settings. On managed Macs, ask IT to allowlist `cool.andre.Mirrorup.CameraExtension` (see docs/development.md). |
+| "The camera did not take the photo… turn it to the movie position and back to ON" | The camera is stuck refusing the shutter (it ignores its own shutter button too). Turn the power switch to the camcorder icon and back to ON. |
 | Camera screen stays dark after quitting | Restart the camera. Mirrorup hands output back to the rear screen on stop, but a force-killed app can't. |
 | Logs | `log stream --predicate 'subsystem == "cool.andre.Mirrorup"' --level debug`, or Diagnostics → Export. |
 
@@ -103,8 +118,8 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 
 - Output is fixed at 1280×720 `420v` @ 30 fps. Camera frames (960×640 or 1024×576) are scaled to
   fill it and centre-cropped. USB live view on the SL2 is ~30 fps; there is no 1080p over USB.
-- Camera controls (ISO, shutter, aperture, WB, AF) are not exposed yet. The protocol notes in
-  [docs/canon-eos-ptp.md](docs/canon-eos-ptp.md) cover the properties for a future version.
+- The SL2's 10× live-view zoom sends the same image as 5× over USB, so only 1× and 5× are offered.
+- Photo capture is verified for JPEG to the card; RAW and RAW+JPEG downloads are untested.
 - Direct USB access only works when no other process owns the PTP interface. Mirrorup never kills
   system services to get it.
 - Glass-to-glass latency has not been measured; see [docs/performance.md](docs/performance.md).
