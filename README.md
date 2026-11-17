@@ -16,12 +16,13 @@ vendor extensions. It has no third-party dependencies, no libgphoto2, no vendor 
 
 ## Why
 
-Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around four goals:
+Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around these goals:
 
 - **Bounded latency:** single-slot buffers everywhere, so a slow consumer drops frames instead of
   adding delay.
 - **Recovery:** an explicit capture state machine with exponential backoff and jitter. Mirrorup
-  reconnects after unplugging, camera power-off, stalls and protocol errors.
+  reconnects after unplugging, camera power-off, stalls and protocol errors, and says when the USB
+  connection itself keeps dropping.
 - **Observability:** OSLog categories, signposts, and live metrics (camera FPS, decode time, frame age,
   drops, reconnects) with diagnostics export.
 - **One owner per camera:** the app holds the camera session, and any number of apps can use
@@ -42,7 +43,7 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 | Capture engine, recovery from unplug and power-off | ✅ verified on hardware (stream back 0.8–1.1 s after the camera reappears) |
 | Menu-bar app (capture, preview, diagnostics) | ✅ runs and streams on hardware |
 | Camera Extension | ✅ activates and streams on macOS 27.2 (unmanaged Mac). MDM policies that forbid unlisted system extensions block it |
-| Video app validation | ✅ Photo Booth; ⏳ QuickTime / Safari / FaceTime not tested yet |
+| Video app validation | ✅ Photo Booth, FaceTime; ⏳ QuickTime / Safari not tested yet |
 
 ### Cameras
 
@@ -57,13 +58,15 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 - macOS 26 or later; Apple Silicon (Intel builds, unvalidated).
 - Xcode 26+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) to build the app.
 - An Apple Development certificate, with your Apple ID signed in to Xcode (the Camera Extension must be signed).
-- A supported camera on USB (see above), in a stills shooting mode, menus closed.
+- A supported camera on USB (see above), in a stills shooting mode, menus closed. Plugging it
+  straight into the Mac is more reliable than through an adapter or hub. Turning the camera's
+  **Auto power off** to Disable keeps it ready: Mirrorup keeps it awake only while it is connected.
 
 ## Build
 
 ```bash
 make build        # Swift package + CLI (warnings are errors)
-make test         # 136 hardware-independent tests
+make test         # all hardware-independent tests
 make install-app  # generate the Xcode project, build, copy to /Applications
 ```
 
@@ -79,17 +82,19 @@ streaming switch, the camera's current lens and exposure, and camera controls:
 
 - **Focus:** the Focus button autofocuses; in the 1-point AF focus mode, clicking the preview focuses
   there, with a square that turns green on a lock or yellow when the camera can't lock.
-- **Brightness** (exposure compensation), and under **Picture**: white balance, Picture Style, focus
-  mode, aperture/shutter/ISO when the mode allows them, live-view zoom (1×/5×, click to move the
-  zoomed area), Mirror / Upside Down, and **Enhance** (Apple silicon): sharpens the picture with
-  Apple's machine-learning upscaler at the cost of about 12 ms more latency per frame.
+- **Brightness** (exposure compensation), white balance, Picture Style, ISO, focus mode,
+  aperture/shutter when the mode allows them, live-view zoom (1×/5×, click to move the zoomed area),
+  Mirror / Upside Down, and **Enhance** (Apple silicon): sharpens the picture with Apple's
+  machine-learning upscaler at the cost of about 12 ms more latency per frame.
 - **Battery** level and **Take Photo**: a full-resolution photo, saved to Pictures › Mirrorup (it
   also stays on the camera's card).
 
-Controls show only what the camera allows in its current mode. The green Scene Intelligent Auto
-mode allows only the focus mode; P adds brightness, white balance and Picture Style. With the power
-switch on the movie (camcorder) position the camera streams 16:9, offers fewer settings and refuses
-photos; Mirrorup says so in the popover.
+Controls show only what the camera allows in its current mode and follow the mode dial live. The
+green Scene Intelligent Auto mode allows only the focus mode; P adds brightness, white balance,
+Picture Style and ISO. In P and Av the camera keeps the picture equally bright whatever the ISO, so
+ISO changes only the grain; use Brightness to change brightness. With the power switch on the movie
+(camcorder) position the camera streams 16:9, offers fewer settings and refuses photos; Mirrorup says
+so in the popover.
 
 The ⋯ menu holds Camera Info (every setting the camera reports, searchable), Diagnostics and
 Settings (camera source, start streaming at launch, open at login, camera extension).
@@ -113,7 +118,9 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 
 | Symptom | Fix |
 |---|---|
-| "No camera found" | Turn the camera on. A camera that is off still shows up on USB but not to Image Capture. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
+| "No camera found" | Turn the camera on and check the cable. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
+| "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it: it is switched off (it still shows up on USB), or a USB dropout left it stuck. Turn it on, or off and on again. |
+| "The camera's USB connection dropped … times" | The cable, adapter or port is dropping the connection (macOS logs `hardware connection lost`). Try another cable, or plug the camera straight into the Mac. |
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |
 | "Another app is using the camera" | Quit Photos, Image Capture, or the maker's utility (e.g. EOS Utility, EOS Webcam Utility). |
@@ -131,6 +138,9 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 - Direct USB access only works when no other process owns the PTP interface. Mirrorup never kills
   system services to get it.
 - Glass-to-glass latency has not been measured; see [docs/performance.md](docs/performance.md).
+- On macOS 27.2, replacing a running camera extension can leave it stopped until the Mac restarts
+  (OBS has the same problem). The extension has its own version, so only updates that change it
+  replace it, and Mirrorup asks for a restart when it happens.
 
 ## Documentation
 
