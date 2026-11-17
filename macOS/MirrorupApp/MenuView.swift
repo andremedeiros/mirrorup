@@ -35,7 +35,6 @@ private struct LivePreview: View {
 
     var body: some View {
         PreviewView(renderer: model.preview)
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .overlay {
                 if phase != .live {
                     PreviewPlaceholder(phase: phase)
@@ -210,6 +209,10 @@ private struct Attention {
             action = .installExtension
         case .rebootRequired:
             message = "Restart your Mac to finish installing the Mirrorup Camera."
+            action = nil
+        case .blockedByPolicy:
+            // Installing again can't help: an administrator has to allow the extension.
+            message = "Your organization's device management blocks the Mirrorup Camera. Ask your administrator to allow it."
             action = nil
         case .checking, .activating, .active, .deactivating:
             return nil

@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreMedia
+import MirrorupDiagnostics
 import os
 import SwiftUI
 
@@ -14,6 +15,8 @@ final class PreviewRenderer {
         var drainScheduled = false
         var attached = false
     }
+
+    private var renderedSinceAttach = 0
 
     nonisolated private let pending = OSAllocatedUnfairLock(uncheckedState: Pending())
     private var layer: AVSampleBufferDisplayLayer?
@@ -36,6 +39,7 @@ final class PreviewRenderer {
 
     func attach(_ layer: AVSampleBufferDisplayLayer) {
         self.layer = layer
+        renderedSinceAttach = 0
         pending.withLockUnchecked { $0.attached = true }
     }
 
@@ -56,9 +60,16 @@ final class PreviewRenderer {
         }
         guard let sampleBuffer, let layer else { return }
         let renderer = layer.sampleBufferRenderer
-        if renderer.status == .failed { renderer.flush() }
+        if renderer.status == .failed {
+            Diagnostics.app.error("Preview renderer failed: \(renderer.error?.localizedDescription ?? "unknown", privacy: .public); flushing")
+            renderer.flush()
+        }
         guard renderer.isReadyForMoreMediaData else { return }
         renderer.enqueue(sampleBuffer)
+        renderedSinceAttach += 1
+        if renderedSinceAttach == 1 {
+            Diagnostics.app.info("Preview rendering (first frame enqueued, layer \(Int(layer.bounds.width))x\(Int(layer.bounds.height)))")
+        }
     }
 }
 
@@ -75,6 +86,15 @@ struct PreviewView: NSViewRepresentable {
 
     func updateNSView(_ nsView: PreviewNSView, context: Context) {}
 
+    /// An NSView has no natural size, and the menu-bar popover sizes itself from its content's ideal
+    /// size; without this the preview collapses to zero height. Fill the offered width at 16:9.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PreviewNSView, context: Context) -> CGSize? {
+        let width = proposal.width ?? Self.idealWidth
+        return CGSize(width: width, height: (width * 9 / 16).rounded())
+    }
+
+    static let idealWidth: CGFloat = 320
+
     static func dismantleNSView(_ nsView: PreviewNSView, coordinator: ()) {
         nsView.setAttached(false)
     }
@@ -88,10 +108,12 @@ final class PreviewNSView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
         displayLayer.videoGravity = .resizeAspectFill
         displayLayer.backgroundColor = NSColor.black.cgColor
+        // Layer-hosting view: assign the layer before enabling layers, otherwise AppKit treats the
+        // view as layer-backed and manages (and may never display) the layer itself.
         layer = displayLayer
+        wantsLayer = true
     }
 
     @available(*, unavailable)
@@ -118,6 +140,7 @@ final class PreviewNSView: NSView {
     func setAttached(_ attached: Bool) {
         guard attached != isAttached else { return }
         isAttached = attached
+        Diagnostics.app.info("Preview \(attached ? "attached" : "detached", privacy: .public) (window visible: \(self.window?.occlusionState.contains(.visible) == true))")
         if attached {
             renderer?.attach(displayLayer)
         } else {

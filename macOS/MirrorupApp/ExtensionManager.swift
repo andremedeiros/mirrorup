@@ -18,6 +18,8 @@ final class ExtensionManager: NSObject {
         case active
         case deactivating
         case rebootRequired
+        /// A configuration profile (MDM) forbids this system extension; only an administrator can fix it.
+        case blockedByPolicy
         case failed(message: String, detail: String)
 
         var summary: String {
@@ -29,6 +31,7 @@ final class ExtensionManager: NSObject {
             case .active: "Active"
             case .deactivating: "Uninstalling…"
             case .rebootRequired: "Restart your Mac to finish"
+            case .blockedByPolicy: "Blocked by your organization's device management"
             case let .failed(message, _): message
             }
         }
@@ -127,6 +130,10 @@ final class ExtensionManager: NSObject {
             return
         }
         if code == .requestSuperseded { return }
+        if code == .forbiddenBySystemPolicy {
+            state = .blockedByPolicy
+            return
+        }
         // We cancel replacement of an identical, already-installed version; that's success.
         if kind == .activation, code == .requestCanceled {
             refresh()
