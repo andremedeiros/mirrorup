@@ -1,14 +1,16 @@
 # Mirrorup
 
-Mirrorup turns a Canon DSLR into a low-latency macOS webcam. It is a native Swift menu-bar app plus a
+Mirrorup turns a camera on USB into a low-latency macOS webcam. Canon EOS cameras are supported today;
+other makers plug in as drivers ([docs/adding-a-camera.md](docs/adding-a-camera.md)). It is a native Swift menu-bar app plus a
 CoreMediaIO Camera Extension that publishes **Mirrorup Camera** to FaceTime, Safari/WebRTC, Zoom,
 Teams, OBS, QuickTime and any other camera app.
 
-It talks to the camera with its own Swift implementation of PTP (ISO 15740) and Canon's live-view
-vendor extensions. It has no third-party dependencies, no libgphoto2, no Canon SDK and no private Apple API.
+It talks to the camera with its own Swift implementation of PTP (ISO 15740) and each maker's live-view
+vendor extensions. It has no third-party dependencies, no libgphoto2, no vendor SDK and no private Apple API.
 
-> Mirrorup is an independent project. It is not affiliated with, endorsed by or sponsored by Canon Inc.
-> "Canon" and "EOS" are trademarks of Canon Inc. and are used here only to describe compatible cameras.
+> Mirrorup is an independent project. It is not affiliated with, endorsed by or sponsored by any camera
+> maker. "Canon" and "EOS" are trademarks of Canon Inc. and are used here only to describe compatible
+> cameras.
 
 ## Why
 
@@ -46,13 +48,14 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 |---|---|---|
 | Canon EOS Rebel SL2 / 200D | `04A9:32CC` | ✅ validated on firmware 1.0.1 and 1.1.0 (live view 960×640 or 1024×576 depending on camera settings, ~30 fps) |
 | Other Canon EOS DSLRs/mirrorless | `04A9:*` | Should work if the body lists GetViewfinderData (`0x9153`) in its DeviceInfo. Unvalidated |
+| Other makers | — | No driver yet. `mirrorup devices` lists them as "not supported yet"; the app says so by name. |
 
 ## Requirements
 
 - macOS 26 or later; Apple Silicon (Intel builds, unvalidated).
 - Xcode 26+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) to build the app.
 - An Apple Development certificate, with your Apple ID signed in to Xcode (the Camera Extension must be signed).
-- A Canon camera on USB, in a stills shooting mode, menus closed.
+- A supported camera on USB (see above), in a stills shooting mode, menus closed.
 
 ## Build
 
@@ -91,7 +94,7 @@ Settings (camera source, start streaming at launch, open at login, camera extens
 **CLI:**
 
 ```bash
-mirrorup devices                                   # attached Canon cameras
+mirrorup devices                                   # attached cameras and their drivers
 mirrorup inspect                                   # USB descriptors, endpoints, interface owner
 mirrorup camera info [--json all.json]             # everything the camera reports, decoded
 mirrorup ptp info                                  # parsed GetDeviceInfo
@@ -107,9 +110,10 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 
 | Symptom | Fix |
 |---|---|
-| "No camera found" | Turn the camera on. A camera that is off still shows up on USB but not to Image Capture. |
+| "No camera found" | Turn the camera on. A camera that is off still shows up on USB but not to Image Capture. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
+| "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |
-| "The camera is in use by another app" | Quit Photos, Image Capture, EOS Utility or EOS Webcam Utility. |
+| "Another app is using the camera" | Quit Photos, Image Capture, or the maker's utility (e.g. EOS Utility, EOS Webcam Utility). |
 | Mirrorup Camera missing from apps | Check `systemextensionsctl list`. Approve the extension in System Settings. On managed Macs, ask IT to allowlist `cool.andre.Mirrorup.CameraExtension` (see docs/development.md). |
 | "The camera did not take the photo… turn it to the movie position and back to ON" | The camera is stuck refusing the shutter (it ignores its own shutter button too). Turn the power switch to the camcorder icon and back to ON. |
 | Camera screen stays dark after quitting | Restart the camera. Mirrorup hands output back to the rear screen on stop, but a force-killed app can't. |
@@ -129,6 +133,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 
 - [Architecture](docs/architecture.md): processes, modules, concurrency, frame flow
 - [USB feasibility](docs/usb-feasibility.md): IOUSBHost vs ImageCaptureCore experiments on macOS 26+
+- [Adding a camera maker](docs/adding-a-camera.md): the driver contract and checklist
 - [Canon EOS PTP notes](docs/canon-eos-ptp.md): opcodes, payloads, sequences, verified vs hypothesis
 - [Performance](docs/performance.md): benchmarks and optimisation decisions
 - [Development](docs/development.md): build, sign, test

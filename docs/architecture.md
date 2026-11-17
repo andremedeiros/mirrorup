@@ -4,14 +4,15 @@
 
 ```mermaid
 flowchart LR
-    subgraph Camera["Canon EOS (USB)"]
+    subgraph Camera["Camera (USB, PTP)"]
     end
     subgraph System["macOS"]
         PTPD["ptpcamerad<br/>(owns USB PTP interface + session)"]
     end
     subgraph App["Mirrorup.app (menu bar, unsandboxed)"]
         ICT["ImageCapturePTPTransport"] --> SES["PTPSession<br/>(serial gate, TIDs)"]
-        SES --> CAN["CanonCamera actor"]
+        REG["CameraRegistry<br/>discovery → driver"] --> SES
+        SES --> CAN["CameraBackend<br/>(e.g. CanonCamera actor)"]
         CAN --> ENG["CaptureEngine<br/>state machine + recovery"]
         ENG --> DEC["FrameDecoder<br/>VideoToolbox JPEG → 1280×720 420v"]
         DEC --> BUF["LatestFrameBuffer<br/>(1 slot)"]
@@ -47,12 +48,15 @@ flowchart LR
 | `MirrorupPTP` | Value-type containers and codec. `PTPSession` actor serialises transactions through `AsyncSerialGate` (actors are re-entrant across `await`), assigns transaction IDs and maps response codes to `PTPError`. `PTPUSBTransport<Pipe>` adds USB framing: multi-packet reassembly, ZLPs, length limits checked before allocation, TID/opcode checks. | actor + Mutex |
 | `MirrorupUSB` | IORegistry discovery, descriptor parsing, `IOUSBHostBulkPipe` (async enqueue, abort on cancel, interest handler for removal). | `@unchecked Sendable`, documented |
 | `MirrorupImageCapture` | `ImageCaptureBrowser` (main actor; ImageCaptureCore calls back on main) and `ImageCapturePTPTransport`: each request races its own deadline and task cancellation, and device removal fails the in-flight request immediately. | MainActor + Mutex |
-| `MirrorupCanon` | `CanonCamera` actor: init sequence, live-view arming through `0xD1B0`, the GetViewfinderData poll loop with not-ready retries, periodic GetEvent drain, KeepDeviceOn, and re-arming when the user leaves PC live view. EVF payload and GetEvent parsers. | actor |
+| `MirrorupDevices` | Vendor-neutral discovery over both transports (`CameraDiscovery`, `DiscoveredCamera`, `CameraTransport`), the `CameraDriver` protocol, `CameraRegistry` (first supporting driver wins; names attached-but-unsupported cameras in the not-found error), and the shared `PTPError` → `CameraError` mapping. | MainActor hops for ImageCaptureCore |
+| `MirrorupCameras` | `CameraRegistry.builtIn`: the drivers the app and CLI ship. The only module that knows every driver. | — |
+| `MirrorupCanon` | `CanonDriver` (claims Canon PTP devices) and the `CanonCamera` actor: init sequence, live-view arming through `0xD1B0`, the GetViewfinderData poll loop with not-ready retries, periodic GetEvent drain, KeepDeviceOn, and re-arming when the user leaves PC live view. EVF payload and GetEvent parsers. | actor |
 | `MirrorupCapture` | `CameraBackend` contract, the pure `CaptureStateMachine`, `CaptureEngine`/`CaptureLoop` (recovery with exponential backoff and jitter, stall watchdog, deadlines), `FrameDecoder`, `LatestFrameBuffer`, `FrameMetrics`, `SyntheticCamera`. | actor + `@concurrent` loop |
 | `MirrorupDiagnostics` | OSLog categories, signposts, `HostTime`, bounded `SampleWindow`. | — |
 
-Errors are layered. `PTPTransportError` (I/O) is wrapped by `PTPError` (protocol), and `CanonCamera`
-maps both to `CameraError`. `CameraError` carries a plain-language `message`, a diagnostic `detail`
+Errors are layered. `PTPTransportError` (I/O) is wrapped by `PTPError` (protocol); drivers map both to
+`CameraError` (`CameraError(ptp:context:)` covers the generic cases, drivers override where they know
+better, e.g. Canon's live-view refusals). `CameraError` carries a plain-language `message`, a diagnostic `detail`
 and a `disposition` (skip frame / reconnect / wait for device / fatal / stop) that drives recovery.
 
 ## Camera metadata
@@ -64,23 +68,25 @@ keyed by `ItemKind` (an enum; neutral kinds such as `.aperture`, `.lensName`, `.
 item carries the human value, the raw protocol value, the allowed values, and whether any public
 source documents it.
 
-- **Camera-wide:** `CameraBackend.metadata()`. `CanonCamera` combines DeviceInfo (identity,
-  capabilities named through `PTPCatalog`/`CanonCatalog`) with every GetEvent property and
-  allowed-value list (decoded by `CanonCatalog`). The capture loop refreshes it after connect, after
-  live view starts, and once a second while streaming.
+- **Camera-wide:** `CameraBackend.metadata()`, read on demand through
+  `CaptureEngine.cameraMetadata()` (popover open, Camera Info window, diagnostics export); nothing
+  polls it. `CanonCamera` combines DeviceInfo (identity, capabilities named through
+  `PTPCatalog`/`CanonCatalog`) with every GetEvent property and allowed-value list.
 - **Per frame:** `CanonViewfinderParser` parses every block of each live-view payload into
-  `CanonViewfinderMetadata` (cheap, no formatting). `CanonCamera` formats it into items at most
-  4 times a second and attaches them to `CameraFrame.metadata`.
-- **Consumers:** `CaptureStatus.cameraMetadata` / `.frameMetadata`. The app's Camera window and the
-  CLI's text output show `documentedOnly`. `mirrorup camera info --json`, the snapshot sidecar and the
+  `CanonViewfinderMetadata` (cheap, no formatting); `metadata()` formats the latest frame's blocks
+  into the `.frame` section when asked.
+- **Consumers:** the app's Camera window and the CLI's text output show `documentedOnly`. `mirrorup camera info --json`, the snapshot sidecar and the
   diagnostics export keep everything, including undocumented codes.
 
 ## Camera controls
 
 `CameraControlling` (`MirrorupCapture/CameraControls.swift`) is an optional backend capability:
 settings (`CameraSetting`: aperture, shutter, ISO, brightness/exposure compensation, white balance,
-colour temperature, Picture Style, AF method) with the options the camera currently allows,
-autofocus, focus at a point, live-view zoom, and photo capture. `CaptureEngine.controls()` returns the
+colour temperature, image style, AF method) with the options the camera currently allows and the
+maker's own label for each (`CameraSettingState.title`, e.g. Canon's "Picture Style"), autofocus,
+focus at a point, live-view zoom at the factors the camera offers (`zoomLevels`), photo capture, and
+user-facing hints in the camera's own terms (`hint`, `photoUnavailableReason`). The app has no
+vendor wording of its own. `CaptureEngine.controls()` returns the
 active backend when it conforms. `CanonCamera` implements it with Canon PTP commands (see
 `canon-eos-ptp.md`, Controls); the commands go through the same `PTPSession` gate as frame polling,
 so they interleave safely with streaming.
@@ -126,6 +132,9 @@ test per transition. There are no ad-hoc flags. Each engine run has a generation
 events from a cancelled loop are ignored.
 
 ## Frame flow and timing
+
+Steps 1–2 are Canon's; other drivers produce the same `CameraFrame` (a baseline JPEG slice and two
+host timestamps) their own way.
 
 1. `CanonCamera.nextFrame()` polls `GetViewfinderData`. The first byte request is stamped
    `acquisitionStart` (host time). Not-ready replies (`0xA102`) are retried every 3 ms.

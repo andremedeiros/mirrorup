@@ -1,7 +1,8 @@
 # AGENTS.md — instructions for coding agents
 
-Mirrorup turns a Canon EOS camera (validated: EOS Rebel SL2 / 200D) into a macOS webcam. Read
-`docs/architecture.md` first; protocol facts live in `docs/canon-eos-ptp.md`, platform constraints in
+Mirrorup turns a USB camera into a macOS webcam through per-maker drivers (shipped: Canon EOS,
+validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the driver contract is in
+`docs/adding-a-camera.md`, Canon protocol facts in `docs/canon-eos-ptp.md`, platform constraints in
 `docs/usb-feasibility.md`.
 
 ## Layout
@@ -13,7 +14,9 @@ Mirrorup turns a Canon EOS camera (validated: EOS Rebel SL2 / 200D) into a macOS
 | `Sources/MirrorupUSB` | IOUSBHost discovery/descriptors and bulk pipe | PTP |
 | `Sources/MirrorupImageCapture` | ImageCaptureCore browser + PTP pass-through transport | PTP |
 | `Sources/MirrorupCapture` | `CameraBackend` contract, capture engine/state machine, decoder, latest-frame buffer, `SyntheticCamera` | Diagnostics |
-| `Sources/MirrorupCanon` | Canon EOS backend (`CanonCamera`), events, EVF parsing, factory | all of the above |
+| `Sources/MirrorupDevices` | Vendor-neutral discovery (`CameraDiscovery`), `CameraDriver`, `CameraRegistry`, PTP→`CameraError` mapping | PTP, USB, ImageCapture, Capture |
+| `Sources/MirrorupCanon` | `CanonDriver` + Canon EOS backend (`CanonCamera`), events, EVF parsing, controls | PTP, Capture, Devices |
+| `Sources/MirrorupCameras` | `CameraRegistry.builtIn`: the shipped driver list (only module that knows every driver) | Devices, drivers |
 | `Tools/MirrorupCLI` | `mirrorup` CLI | all |
 | `macOS/` | SwiftUI menu-bar app + CoreMediaIO Camera Extension. `project.yml` (XcodeGen) is the only project definition; the `.xcodeproj`, Info.plists and entitlements are generated and untracked | package products |
 | `web/webcam-test.html` | Safari/WebRTC validation page | — |
@@ -22,14 +25,20 @@ Mirrorup turns a Canon EOS camera (validated: EOS Rebel SL2 / 200D) into a macOS
 
 - Swift 6 language mode, strict concurrency, no warnings (`make build` uses `-warnings-as-errors`).
 - No third-party dependencies, no libgphoto2/Rust/C transport code, no private Apple API.
-- Canon opcodes stay in `MirrorupCanon`; `MirrorupPTP` stays vendor-neutral.
+- Vendor opcodes, wording and quirks stay in the driver module (`MirrorupCanon`, …); `MirrorupPTP`,
+  `MirrorupCapture`, `MirrorupDevices`, the app and the CLI never name a maker. Backends phrase
+  user-facing hints and errors in the camera's own terms (`CameraControlState.hint`,
+  `CameraSettingState.title`, `CameraError.message`); the app shows them as is.
+- Drivers never depend on each other; `MirrorupCameras` is the only place listing them.
 - Only one process owns the camera: the app. The Camera Extension never opens USB/ImageCaptureCore.
 - Never terminate `ptpcamerad` or other system services. Default transport is ImageCaptureCore.
 - No unbounded frame queues anywhere. Drop stale frames instead of adding latency.
-- Do not change camera settings beyond what live view requires; restore `0xD1B0` on stop.
+- Do not change camera settings beyond what live view requires; restore what you changed on stop
+  (Canon: `0xD1B0`). Never send Canon MovieSelectSWOn/Off (0x9133/0x9134): it can leave the SL2
+  refusing every shutter release until its power switch is cycled.
 - User-facing text comes from `CameraError.message`; raw PTP/IOReturn codes go in `detail` only.
 - Never drop camera metadata and never show magic values: decode every property, event, format and
-  live-view block into `CameraMetadata` with human values (`CanonCatalog`, `CanonViewfinderMetadata`).
+  live-view block into `CameraMetadata` with human values (Canon: `CanonCatalog`, `CanonViewfinderMetadata`).
   Undocumented codes are kept with `isDocumented == false` (hidden in UI, kept in JSON/diagnostics);
   never guess a meaning. Identify things with enums (`ItemKind`, `SectionKind`, `WindowID`), not strings.
 - Don't publish measurements you didn't take; benchmarks live in `benchmarks/` with their raw output.
