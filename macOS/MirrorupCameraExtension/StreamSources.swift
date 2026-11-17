@@ -38,7 +38,9 @@ final class SourceStreamSource: NSObject, CMIOExtensionStreamSource, @unchecked 
         super.init()
         stream = CMIOExtensionStream(
             localizedName: VirtualCameraConfig.sourceStreamName,
-            streamID: VirtualCameraConfig.sourceStreamID,
+            // Fresh per device instance: a renamed device replaces the old one before CoreMediaIO
+            // has finished removing it, and reused stream IDs fail with "streamID already included".
+            streamID: UUID(),
             direction: .source,
             clockType: .hostTime,
             source: self
@@ -65,12 +67,18 @@ final class SourceStreamSource: NSObject, CMIOExtensionStreamSource, @unchecked 
         return true
     }
 
+    /// Called after the source starts or stops, so the device can announce it. Set once by the
+    /// owning device before it is published.
+    var onActiveChanged: (@Sendable () -> Void)?
+
     func startStream() throws {
         relay.startSource(on: stream)
+        onActiveChanged?()
     }
 
     func stopStream() throws {
         relay.stopSource()
+        onActiveChanged?()
     }
 }
 
@@ -100,7 +108,7 @@ final class SinkStreamSource: NSObject, CMIOExtensionStreamSource, @unchecked Se
         super.init()
         stream = CMIOExtensionStream(
             localizedName: VirtualCameraConfig.sinkStreamName,
-            streamID: VirtualCameraConfig.sinkStreamID,
+            streamID: UUID(),
             direction: .sink,
             clockType: .hostTime,
             source: self

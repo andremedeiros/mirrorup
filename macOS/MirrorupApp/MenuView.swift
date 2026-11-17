@@ -26,7 +26,7 @@ struct MenuView: View {
                 AttentionView(attention: attention, extensionManager: model.extensionManager)
             }
             Divider()
-            MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable))
+            MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable, name: model.virtualCameraName))
         }
         .padding(14)
         .frame(width: 340)
@@ -348,12 +348,12 @@ private struct MenuFooter: View {
         let help: String?
 
         /// Nil when the attention block above already explains the state.
-        init?(attention: Attention?, isAvailable: Bool) {
+        init?(attention: Attention?, isAvailable: Bool, name: String) {
             if let attention {
                 guard attention.action == nil else { return nil }
                 (text, symbol, color, help) = (attention.shortMessage, "exclamationmark.triangle.fill", .orange, attention.message)
             } else if isAvailable {
-                (text, symbol, color, help) = ("Available as “Mirrorup Camera”", "checkmark.circle.fill", .green, nil)
+                (text, symbol, color, help) = ("Available as “\(name)”", "checkmark.circle.fill", .green, nil)
             } else {
                 (text, symbol, color, help) = ("Mirrorup Camera unavailable", "circle.dashed", .secondary, nil)
             }

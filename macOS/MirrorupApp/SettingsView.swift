@@ -27,7 +27,7 @@ struct SettingsView: View {
             } header: {
                 Text("Mirrorup Camera")
             } footer: {
-                Text("The camera extension publishes “Mirrorup Camera” to FaceTime, browsers and other video apps.")
+                Text("The camera extension publishes your camera to FaceTime, browsers and other video apps as “\(model.virtualCameraName)”.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

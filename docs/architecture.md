@@ -41,6 +41,16 @@ flowchart LR
   on the extension's sink stream (`CMIOStreamCopyBufferQueue`). The pixel buffers are
   IOSurface-backed, so they cross the process boundary without copying pixels. There is no custom
   XPC or shared-memory code. CoreMediaIO fans the source stream out to any number of client apps.
+- **Device name:** one device with a fixed device ID (apps remember it), named after the selected
+  source: "<camera name> (Mirrorup)", "Test Pattern (Mirrorup)", or "Mirrorup Camera" before any
+  camera has connected. The camera source keeps the last camera's name while it is off, so USB
+  dropouts never rename it. The app sets the name through a custom device property; the extension
+  renames by replacing the device (same device ID, new streams) and remembers the name across
+  restarts. The app stops its sink first and postpones the rename while another app streams.
+- **Extension upgrades:** the app activates the embedded extension when its build number differs,
+  then relaunches itself, because a CoreMediaIO client doesn't see the replacement process. macOS
+  27.2 can lose the job of an extension replaced while running (see `AGENTS.md`); the relaunched app
+  then reports that a restart is needed. Video apps that were open may need reopening.
 
 ## Modules (Swift package)
 

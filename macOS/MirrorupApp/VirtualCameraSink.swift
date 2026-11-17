@@ -45,8 +45,15 @@ final class VirtualCameraSink: @unchecked Sendable {
     private let control = DispatchQueue(label: "cool.andre.Mirrorup.sink.control", qos: .userInitiated)
     private var active = false
     private var devicesListener: CMIOObjectPropertyListenerBlock?
+    /// A rename attempt is scheduled (another app was using the camera).
+    private var renameScheduled = false
+    /// The device being renamed away from, and until when to wait for its replacement before
+    /// reconnecting to it (the extension ignores a rename when a client started streaming meanwhile).
+    private var renaming: (from: CMIODeviceID, deadline: DispatchTime)?
     private var state: State = .inactive
     private var retryScheduled = false
+    /// Name the device should carry; sent on every connect and whenever it changes.
+    private var deviceName: String?
 
     init() {
         (states, stateContinuation) = AsyncStream.makeStream(of: State.self, bufferingPolicy: .bufferingNewest(1))
@@ -74,6 +81,15 @@ final class VirtualCameraSink: @unchecked Sendable {
             removeDevicesListener()
             disconnect()
             publish(.inactive)
+        }
+    }
+
+    /// Names the Mirrorup device after the selected camera (see `renameIfNeeded`).
+    func setDeviceName(_ name: String) {
+        control.async { [self] in
+            guard name != deviceName else { return }
+            deviceName = name
+            renameIfNeeded()
         }
     }
 
@@ -109,6 +125,14 @@ final class VirtualCameraSink: @unchecked Sendable {
     private func refresh() {
         guard active else { return }
         let device = findDevice()
+        if let renaming {
+            // Don't reconnect to the device being replaced; give up waiting after the deadline.
+            if device == renaming.from, DispatchTime.now() < renaming.deadline {
+                scheduleRetry()
+                return
+            }
+            self.renaming = nil
+        }
         if let current = connection.withLockUnchecked({ $0 }) {
             if current.device == device { return }
             log.info("Mirrorup Camera device changed or disappeared; disconnecting sink")
@@ -116,11 +140,16 @@ final class VirtualCameraSink: @unchecked Sendable {
         }
         guard let device else {
             publish(.deviceNotFound)
+            // The device-list listener reports devices of the extension process already running,
+            // but not the first device of a newly launched one (after an extension upgrade), so
+            // keep looking while the device is missing.
+            scheduleRetry()
             return
         }
         do {
             try connect(device: device)
             publish(.connected)
+            renameIfNeeded()
         } catch {
             log.error("Sink connect failed: \(error.detail, privacy: .public)")
             publish(.failed(message: error.message, detail: error.detail))
@@ -137,20 +166,54 @@ final class VirtualCameraSink: @unchecked Sendable {
         }
     }
 
+    /// Renames the device when it doesn't carry `deviceName`. The extension renames by replacing the
+    /// device, and a client streaming into a device never sees its replacement (it keeps feeding the
+    /// removed one), so the sink stops first. While another app streams from the camera the rename
+    /// waits (checked before stopping, so the camera never freezes for it) and is retried every 5 s.
+    private func renameIfNeeded() {
+        guard active, !renameScheduled, let name = deviceName, let current = connection.withLockUnchecked({ $0 }),
+              CMIO.string(current.device, kCMIOObjectPropertyName) != name else { return }
+        let device = current.device
+        if CMIO.string(device, Int(VirtualCameraConfig.sourceActiveSelector)) == "1" {
+            log.info("Renaming the Mirrorup camera to \(name, privacy: .public) waits until no app uses it")
+            scheduleRename()
+            return
+        }
+        disconnect()
+        var address = CMIO.address(Int(VirtualCameraConfig.deviceNameSelector))
+        var value = name as CFString
+        let status = withUnsafeMutablePointer(to: &value) {
+            CMIOObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<CFString>.size), $0)
+        }
+        if status != noErr {
+            log.error("Setting the device name failed: \(CMIO.describe(status), privacy: .public)")
+        }
+        // The device-list listener reconnects to the renamed device; the retry covers a missed
+        // change or an ignored rename.
+        renaming = (device, .now() + .seconds(2))
+        publish(.deviceNotFound)
+        scheduleRetry()
+    }
+
+    private func scheduleRename() {
+        guard !renameScheduled else { return }
+        renameScheduled = true
+        control.asyncAfter(deadline: .now() + .seconds(5)) { [self] in
+            renameScheduled = false
+            renameIfNeeded()
+        }
+    }
+
     private struct ConnectError: Error {
         let message: String
         let detail: String
     }
 
     private func connect(device: CMIODeviceID) throws(ConnectError) {
-        let streams = CMIO.objectIDs(device, kCMIODevicePropertyStreams)
-        // kCMIOStreamPropertyDirection: 0 = output stream (data flows from the client into the device,
-        // i.e. a CMIOExtension sink), 1 = input stream (capture, i.e. the source clients read).
-        let sinkStream = streams.first { CMIO.uint32($0, kCMIOStreamPropertyDirection) == 0 }
-        guard let sinkStream else {
+        guard let sinkStream = sinkStream(of: device) else {
             throw ConnectError(
                 message: "The Mirrorup Camera extension is out of date. Reinstall it from Mirrorup Settings.",
-                detail: "No output-direction stream on device \(device) (streams: \(streams))"
+                detail: "No output-direction stream on device \(device) (streams: \(CMIO.objectIDs(device, kCMIODevicePropertyStreams)))"
             )
         }
 
@@ -193,6 +256,12 @@ final class VirtualCameraSink: @unchecked Sendable {
         return CMIO.objectIDs(system, kCMIOHardwarePropertyDevices).first { device in
             CMIO.string(device, kCMIODevicePropertyDeviceUID)?.caseInsensitiveCompare(deviceUID) == .orderedSame
         }
+    }
+
+    /// kCMIOStreamPropertyDirection 0 = output stream: data flows from the client into the device,
+    /// i.e. the CMIOExtension sink.
+    private func sinkStream(of device: CMIODeviceID) -> CMIOStreamID? {
+        CMIO.objectIDs(device, kCMIODevicePropertyStreams).first { CMIO.uint32($0, kCMIOStreamPropertyDirection) == 0 }
     }
 
     private func installDevicesListener() {

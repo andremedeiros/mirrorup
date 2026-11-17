@@ -60,6 +60,9 @@ final class FrameRelay: @unchecked Sendable {
         self.fallback = fallback
     }
 
+    /// True while at least one client streams from the source.
+    var isSourceActive: Bool { queue.sync { timer != nil } }
+
     // MARK: Source side
 
     /// Starts the gap-filling timer. CoreMediaIO calls `startStream` once for the first client and

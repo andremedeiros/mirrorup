@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import ServiceManagement
@@ -24,6 +25,9 @@ final class AppModel {
         static let mirrored = "mirrored"
         static let upsideDown = "upsideDown"
         static let enhance = "enhanceDetail"
+        /// Launch argument (`-MirrorupAfterExtensionUpgrade YES`) of the instance started by
+        /// `relaunchAfterExtensionUpgrade`.
+        static let afterExtensionUpgrade = "MirrorupAfterExtensionUpgrade"
     }
 
     var source: CameraSource {
@@ -33,6 +37,7 @@ final class AppModel {
             UserDefaults.standard.set(newSource.rawValue, forKey: Keys.source)
             sourceBox.withLock { $0 = newSource }
             Diagnostics.app.info("Source changed to \(newSource.rawValue, privacy: .public)")
+            updateVirtualCameraName()
             if wantsStreaming { enqueueTransition(stop: true, start: true) }
         }
     }
@@ -152,6 +157,10 @@ final class AppModel {
         })
         applyOrientation()
         engine.setEnhance(enhance)
+        extensionManager.isDeviceMissing = { [weak self] in self?.sinkState == .deviceNotFound }
+        extensionManager.onReplaced = { [weak self] in self?.relaunchAfterExtensionUpgrade() }
+        if defaults.bool(forKey: Keys.afterExtensionUpgrade) { extensionManager.verifyDeviceAfterUpgrade() }
+        updateVirtualCameraName()
         Task { await launch() }
     }
 
@@ -192,6 +201,30 @@ final class AppModel {
         sink.deactivate()
         for task in backgroundTasks { task.cancel() }
         backgroundTasks.removeAll()
+    }
+
+    /// A process that was connected to the extension never sees the process that replaces it, so
+    /// after an upgrade this app can't feed the camera until it relaunches. Waits for the new
+    /// extension to start, releases the camera and the sink (one process owns the camera), then
+    /// opens a fresh instance and quits.
+    private func relaunchAfterExtensionUpgrade() {
+        Diagnostics.app.notice("Camera extension upgraded; relaunching to connect to it")
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            await shutdown()
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.createsNewApplicationInstance = true
+            configuration.activates = false
+            configuration.arguments = ["-\(Keys.afterExtensionUpgrade)", "YES"]
+            do {
+                try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+                // Not from this main-actor job: `terminate` waits in a nested run loop for the
+                // delegate's shutdown task, which can't run until this job returns.
+                RunLoop.main.perform { MainActor.assumeIsolated { NSApplication.shared.terminate(nil) } }
+            } catch {
+                Diagnostics.app.error("Relaunch after the extension upgrade failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func setStreaming(_ on: Bool) {
@@ -488,7 +521,7 @@ final class AppModel {
         var accessibilityValue: String {
             switch self {
             case .stopped: "Off"
-            case .streamingToVirtualCamera: "Live on Mirrorup Camera"
+            case .streamingToVirtualCamera: "Live on the Mirrorup camera"
             case .streaming: "Live"
             case .failed: "Problem"
             case .working: "Connecting"
@@ -523,8 +556,22 @@ final class AppModel {
         case .testPattern: "Test Pattern"
         }
     }
-    /// The extension is active and receiving frames, so other apps can pick "Mirrorup Camera".
+    /// The extension is active and receiving frames, so other apps can pick `virtualCameraName`.
     private(set) var isVirtualCameraAvailable = false
+    /// What other apps list the Mirrorup device as: named after the selected source.
+    private(set) var virtualCameraName = VirtualCameraConfig.defaultDeviceName
+
+    /// The camera source keeps the last camera's name while it is off or reconnecting, so USB
+    /// dropouts never rename the device; only a different camera or source does.
+    private func updateVirtualCameraName() {
+        let name = switch source {
+        case .camera: lastCameraName.map(VirtualCameraConfig.deviceName(forCamera:)) ?? VirtualCameraConfig.defaultDeviceName
+        case .testPattern: VirtualCameraConfig.deviceName(forCamera: title(for: .testPattern))
+        }
+        if name != virtualCameraName { virtualCameraName = name }
+        // Sent even when unchanged at launch: the extension may still carry another source's name.
+        sink.setDeviceName(name)
+    }
 
     private func updatePresentation() {
         let newPhase: Phase
@@ -550,6 +597,7 @@ final class AppModel {
         if runningSource == .camera, let name = cameraName, name != lastCameraName {
             lastCameraName = name
             UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
+            updateVirtualCameraName()
         }
         isVirtualCameraAvailable = sinkState == .connected
         if newPhase != .live { controlState = nil }

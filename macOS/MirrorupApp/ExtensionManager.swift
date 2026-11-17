@@ -56,6 +56,14 @@ final class ExtensionManager: NSObject {
     @ObservationIgnored private var activateAfterCheck = false
     /// User-initiated activations always replace; automatic ones never disturb a running extension.
     @ObservationIgnored private var forceReplace = false
+    /// The activation in flight replaced an installed extension.
+    @ObservationIgnored private var replacing = false
+    /// Called after an activation replaced an installed extension. CoreMediaIO clients that were
+    /// connected to the old extension process never see the new one, this app included; the owner
+    /// relaunches the app.
+    @ObservationIgnored var onReplaced: (() -> Void)?
+    /// Whether the Mirrorup device is absent from CoreMediaIO; set by the owner.
+    @ObservationIgnored var isDeviceMissing: (() -> Bool)?
     @ObservationIgnored private let log = Diagnostics.app
     /// Defined once in project.yml (`EXTENSION_BUNDLE_ID`) and injected into the app's Info.plist.
     private let identifier = ExtensionManager.extensionBundleIdentifier
@@ -113,6 +121,10 @@ final class ExtensionManager: NSObject {
         case .completed:
             state = kind == .deactivation ? .notInstalled : .active
             log.info("System extension request completed (\(String(describing: kind), privacy: .public))")
+            if kind == .activation && replacing {
+                replacing = false
+                onReplaced?()
+            }
         case .willCompleteAfterReboot:
             state = .rebootRequired
         @unknown default:
@@ -120,8 +132,24 @@ final class ExtensionManager: NSObject {
         }
     }
 
+    /// Run by a fresh app instance after an extension upgrade. Replacing a running CMIO extension
+    /// can lose its launchd job ("Submit job failed … error 37", then "removing service"): the
+    /// extension reports activated and enabled, but no process runs and no camera exists.
+    /// Activating the same version again is a no-op (sysextd: alreadyActive); only a restart, or the
+    /// next version, brings it back. A fresh process sees a running extension at once, so a device
+    /// still missing after 10 s means the job is gone.
+    func verifyDeviceAfterUpgrade() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, state == .active, isDeviceMissing?() == true else { return }
+            log.error("Mirrorup Camera missing 10 s after the extension upgrade; a restart is needed")
+            state = .rebootRequired
+        }
+    }
+
     private func failed(_ id: ObjectIdentifier, error: NSError) {
         let kind = pending.removeValue(forKey: id)
+        replacing = false
         let detail = "\(error.domain) \(error.code): \(error.localizedDescription)"
         log.error("System extension request failed (\(String(describing: kind), privacy: .public)): \(detail, privacy: .public)")
         let code = error.domain == OSSystemExtensionErrorDomain ? OSSystemExtensionError.Code(rawValue: error.code) : nil
@@ -206,6 +234,7 @@ extension ExtensionManager: OSSystemExtensionRequestDelegate {
         Diagnostics.app.info(
             "Replacing camera extension \(existing.bundleShortVersion, privacy: .public) (\(existing.bundleVersion, privacy: .public)) with \(ext.bundleShortVersion, privacy: .public) (\(ext.bundleVersion, privacy: .public))"
         )
+        MainActor.assumeIsolated { replacing = true }
         return .replace
     }
 

@@ -86,6 +86,24 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 - The signing team ID is the certificate's OU, not the ID shown in the certificate name.
 - On a killed host process the camera keeps `0xD1B0` with the PC bit set; stop always clears it.
 - Actor methods are re-entrant: serialize PTP transactions with `PTPSession`'s gate, not the actor.
+- A sink `CMSampleBuffer` with the `DisplayImmediately` sample attachment fails to deserialize in the
+  Camera Extension (`FigSampleBufferSerialization` -19646, `CMIOExtensionSample alloc failed`) and
+  the extension shows the fallback frame. Only the preview's own buffer carries that attachment.
+- Replacing a CMIO extension while its process runs loses the launchd job on macOS 27.2
+  (`Submit job failed … error = 37: Operation already in progress`, then `removing service`): sysextd
+  reports `activated enabled` but nothing runs and no camera exists (also reported by OBS users).
+  Seen on 6 of 6 upgrades over a running extension; upgrading over a lost job works. Re-activating
+  the same version is a no-op (sysextd `alreadyActive`), and quitting the extension first doesn't help
+  (launchd respawns it within ~20 ms). Only a restart or the next version recovers it.
+- When the extension process respawns (same launchd job), connected CoreMediaIO clients never
+  reconnect (none within 45 s; AVFoundation clients included); fresh processes see it. After an
+  upgrade, Photo Booth picked up the new process but the app's own sink did not, so the app
+  relaunches itself after replacing the extension.
+- Renaming the device = removing it and adding a new `CMIOExtensionDevice` (`localizedName` is
+  read-only). Reused stream IDs fail with `streamID already included` (removal is asynchronous), and a
+  client streaming into the sink never sees the replacement, so the sink stops before renaming.
+- Extension custom properties (`4cc_<sel>_glob_0000`, string values) are cached client-side until
+  the extension calls `notifyPropertiesChanged`.
 
 ## Testing conventions
 

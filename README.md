@@ -2,7 +2,7 @@
 
 Mirrorup turns a camera on USB into a low-latency macOS webcam. Canon EOS cameras are supported today;
 other makers plug in as drivers ([docs/adding-a-camera.md](docs/adding-a-camera.md)). It is a native Swift menu-bar app plus a
-CoreMediaIO Camera Extension that publishes **Mirrorup Camera** to FaceTime, Safari/WebRTC, Zoom,
+CoreMediaIO Camera Extension that publishes your camera, named after it (e.g. **Canon EOS Rebel SL2 (Mirrorup)**), to FaceTime, Safari/WebRTC, Zoom,
 Teams, OBS, QuickTime and any other camera app.
 
 It talks to the camera with its own Swift implementation of PTP (ISO 15740) and each maker's live-view
@@ -23,7 +23,7 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 - **Observability:** OSLog categories, signposts, and live metrics (camera FPS, decode time, frame age,
   drops, reconnects) with diagnostics export.
 - **One owner per camera:** the app holds the camera session, and any number of apps can use
-  Mirrorup Camera at once.
+  the Mirrorup camera at once.
 - **Nothing hidden:** every value the camera reports is decoded to human terms (lens, aperture,
   shutter, ISO, white balance, image quality, battery, focus points, sensor size, formats...) in the
   app's Camera window and `mirrorup camera info`. Codes no public source documents are kept, raw,
@@ -39,8 +39,8 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around fou
 | Canon live view, snapshot, benchmark | ✅ verified: **29.96 fps for 10 minutes, 0 invalid frames, 6.9% CPU, 10.6 MB** |
 | Capture engine, recovery from unplug and power-off | ✅ verified on hardware (stream back 0.8–1.1 s after the camera reappears) |
 | Menu-bar app (capture, preview, diagnostics) | ✅ runs and streams on hardware |
-| Camera Extension (Mirrorup Camera) | ⏳ builds and signs; **activation not yet validated**. The development Mac's MDM policy forbids unlisted system extensions |
-| QuickTime / Safari / FaceTime validation | ⏳ pending (needs the extension active) |
+| Camera Extension | ✅ activates and streams on macOS 27.2 (unmanaged Mac). MDM policies that forbid unlisted system extensions block it |
+| Video app validation | ✅ Photo Booth; ⏳ QuickTime / Safari / FaceTime not tested yet |
 
 ### Cameras
 
@@ -71,7 +71,8 @@ See [docs/development.md](docs/development.md) for signing, identifiers and hard
 
 **App:** launch `/Applications/Mirrorup.app`. On first launch it asks macOS to install the Camera
 Extension. Approve it in System Settings → General → Login Items & Extensions → Camera Extensions,
-then choose **Mirrorup Camera** in your video app. Click the menu-bar icon for the live preview, the
+then choose the camera named after yours (e.g. **Canon EOS Rebel SL2 (Mirrorup)**; **Mirrorup Camera**
+before any camera has connected) in your video app. Click the menu-bar icon for the live preview, the
 streaming switch, the camera's current lens and exposure, and camera controls:
 
 - **Focus:** the Focus button autofocuses; in the 1-point AF focus mode, clicking the preview focuses
@@ -114,7 +115,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |
 | "Another app is using the camera" | Quit Photos, Image Capture, or the maker's utility (e.g. EOS Utility, EOS Webcam Utility). |
-| Mirrorup Camera missing from apps | Check `systemextensionsctl list`. Approve the extension in System Settings. On managed Macs, ask IT to allowlist `cool.andre.Mirrorup.CameraExtension` (see docs/development.md). |
+| Mirrorup camera missing from apps | Check `systemextensionsctl list`. Approve the extension in System Settings. On managed Macs, ask IT to allowlist `cool.andre.Mirrorup.CameraExtension` (see docs/development.md). Right after an update, reopen the video app; if Mirrorup asks you to restart your Mac, do so (macOS 27.2 sometimes fails to start an updated camera extension). |
 | "The camera did not take the photo… turn it to the movie position and back to ON" | The camera is stuck refusing the shutter (it ignores its own shutter button too). Turn the power switch to the camcorder icon and back to ON. |
 | Camera screen stays dark after quitting | Restart the camera. Mirrorup hands output back to the rear screen on stop, but a force-killed app can't. |
 | Logs | `log stream --predicate 'subsystem == "cool.andre.Mirrorup"' --level debug`, or Diagnostics → Export. |

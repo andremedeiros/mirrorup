@@ -72,7 +72,9 @@ when streaming stops.
    not in the list of allowed extensions` and the app shows "Your Mac's security policy doesn't allow
    the Mirrorup camera extension." Your administrator must allowlist the team ID and
    `cool.andre.Mirrorup.CameraExtension`.
-3. Pick "Mirrorup Camera" in FaceTime, QuickTime (File → New Movie Recording), Safari, Zoom, etc.
+3. Pick the Mirrorup camera in FaceTime, QuickTime (File → New Movie Recording), Safari, Zoom, etc.
+   It is named after the selected camera, e.g. "Canon EOS Rebel SL2 (Mirrorup)", or "Mirrorup Camera"
+   before any camera has connected.
 4. Validate Safari with `web/webcam-test.html`:
    `cd web && python3 -m http.server 8000`, then open `http://localhost:8000/webcam-test.html`.
 
