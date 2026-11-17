@@ -11,6 +11,10 @@ private let sourceActiveProperty = CMIOExtensionProperty(rawValue: VirtualCamera
 /// The single Mirrorup device with its source and sink streams. Its name is fixed at creation
 /// (`CMIOExtensionDevice.localizedName` is read-only), so `ProviderSource` renames it by replacing
 /// the whole device under the same device ID.
+///
+/// Nothing in the extension may crash: launchd would relaunch it, and video apps connected to the
+/// old process never see the new one (they lose the camera until reopened). Failures throw and are
+/// logged instead.
 final class DeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendable {
     private(set) var device: CMIOExtensionDevice!
     let name: String
@@ -19,7 +23,11 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendab
     private let relay: FrameRelay
     private let onNameRequest: @Sendable (String) -> Void
 
-    init(name: String, relay: FrameRelay, onNameRequest: @escaping @Sendable (String) -> Void) {
+    struct CreationError: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    init(name: String, relay: FrameRelay, onNameRequest: @escaping @Sendable (String) -> Void) throws(CreationError) {
         self.name = name
         self.relay = relay
         self.onNameRequest = onNameRequest
@@ -34,8 +42,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendab
             formatDescriptionOut: &description
         )
         guard status == noErr, let description else {
-            // Static, valid arguments: failure here means CoreMedia itself is broken.
-            fatalError("CMVideoFormatDescriptionCreate failed: \(status)")
+            throw CreationError(description: "CMVideoFormatDescriptionCreate failed: \(status)")
         }
         // Advertise exactly what the relay produces: 1280x720 '420v' at a fixed 30 fps.
         let format = CMIOExtensionStreamFormat(
@@ -58,7 +65,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendab
             try device.addStream(sourceStream.stream)
             try device.addStream(sinkStream.stream)
         } catch {
-            fatalError("Failed to add streams: \(error.localizedDescription)")
+            throw CreationError(description: "addStream failed: \(error.localizedDescription)")
         }
     }
 
@@ -108,14 +115,24 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource, @unchecked Se
     private(set) var provider: CMIOExtensionProvider!
     private let relay: FrameRelay
     private let log = Diagnostics.virtualCamera
-    /// Serializes renames; everything below is confined to it after `init`.
+    /// Serializes device changes; everything below is confined to it after `init`.
     private let queue = DispatchQueue(label: "cool.andre.Mirrorup.CameraExtension.provider")
-    private var deviceSource: DeviceSource!
+    /// The published device; nil only while a replacement is in progress or after adding failed.
+    private var deviceSource: DeviceSource?
     /// A device replacement is in progress; no device is published meanwhile.
     private var replacing = false
     /// The last name whose device could not be added. Not retried until another name is requested,
     /// or every sink reconnect would set it again and loop.
     private var failedName: String?
+    /// Timed retries used after the device could not be published at all.
+    private var publishRetries = 0
+
+    /// Why a device is being added: the first one, a rename, or putting the old one back.
+    private enum Purpose {
+        case initial
+        case rename(from: String)
+        case restore
+    }
 
     init(relay: FrameRelay) {
         self.relay = relay
@@ -123,17 +140,11 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource, @unchecked Se
         provider = CMIOExtensionProvider(source: self, clientQueue: nil)
         // The extension runs as its own system user; this is its sandbox container's defaults.
         let name = UserDefaults.standard.string(forKey: Self.deviceNameKey) ?? VirtualCameraConfig.defaultDeviceName
-        deviceSource = makeDeviceSource(name: name)
-        do {
-            try provider.addDevice(deviceSource.device)
-        } catch {
-            fatalError("Failed to add device: \(error.localizedDescription)")
-        }
-        log.info("Device published as \(name, privacy: .public)")
+        queue.sync { publish(name: name, purpose: .initial) }
     }
 
-    private func makeDeviceSource(name: String) -> DeviceSource {
-        DeviceSource(name: name, relay: relay) { [weak self] requested in
+    private func makeDeviceSource(name: String) throws(DeviceSource.CreationError) -> DeviceSource {
+        try DeviceSource(name: name, relay: relay) { [weak self] requested in
             self?.requestName(requested)
         }
     }
@@ -146,12 +157,17 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource, @unchecked Se
         let name = String(requested.trimmingCharacters(in: .whitespacesAndNewlines).prefix(VirtualCameraConfig.maxDeviceNameLength))
         guard !name.isEmpty else { return }
         queue.async { [self] in
-            guard !replacing, name != deviceSource.name, name != failedName else { return }
+            guard !replacing, name != deviceSource?.name, name != failedName else { return }
             if relay.isSourceActive {
                 log.info("Rename to \(name, privacy: .public) ignored: a client is streaming")
                 return
             }
-            replaceDevice(name: name)
+            if deviceSource == nil {
+                // The first device never went in; this is another chance to publish one.
+                publish(name: name, purpose: .initial)
+            } else {
+                replaceDevice(name: name)
+            }
         }
     }
 
@@ -159,7 +175,7 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource, @unchecked Se
     /// camera disappear and come back and keep it selected by its device ID; the app reconnects its
     /// sink when the device list changes.
     private func replaceDevice(name: String) {
-        let old = deviceSource!
+        guard let old = deviceSource else { return }
         do {
             try provider.removeDevice(old.device)
         } catch {
@@ -167,41 +183,66 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource, @unchecked Se
             return
         }
         old.invalidate()
-        replacing = true
-        add(makeDeviceSource(name: name), replacing: old.name, attempt: 1)
+        deviceSource = nil
+        publish(name: name, purpose: .rename(from: old.name))
     }
 
-    /// CoreMediaIO finishes removing a device asynchronously, so adding its replacement right away
-    /// can fail; retry for about a second. If the renamed device never goes in, put back a device
-    /// under `previousName` (nil when this already is that restore).
-    private func add(_ candidate: DeviceSource, replacing previousName: String?, attempt: Int) {
+    /// Builds a device named `name` and adds it, retrying for about a second: CoreMediaIO finishes
+    /// removing a device asynchronously, so a replacement added right away can fail. A rename that
+    /// fails puts back a device under the old name.
+    private func publish(name: String, purpose: Purpose) {
+        replacing = true
+        do {
+            add(try makeDeviceSource(name: name), purpose: purpose, attempt: 1)
+        } catch {
+            failed(name: name, purpose: purpose, reason: error.description)
+        }
+    }
+
+    private func add(_ candidate: DeviceSource, purpose: Purpose, attempt: Int) {
         do {
             try provider.addDevice(candidate.device)
         } catch where attempt < 10 {
             queue.asyncAfter(deadline: .now() + .milliseconds(100)) { [self] in
-                add(candidate, replacing: previousName, attempt: attempt + 1)
+                add(candidate, purpose: purpose, attempt: attempt + 1)
             }
             return
         } catch {
-            replacing = false
-            guard let previousName else {
-                log.fault("Restoring the device failed: \(error.localizedDescription, privacy: .public)")
-                return
-            }
-            log.fault("Rename to \(candidate.name, privacy: .public) failed: addDevice: \(error.localizedDescription, privacy: .public); restoring \(previousName, privacy: .public)")
-            failedName = candidate.name
-            replacing = true
-            add(makeDeviceSource(name: previousName), replacing: nil, attempt: 1)
+            failed(name: candidate.name, purpose: purpose, reason: "addDevice: \(error.localizedDescription)")
             return
         }
         deviceSource = candidate
         replacing = false
-        if let previousName {
+        publishRetries = 0
+        switch purpose {
+        case .initial:
+            log.info("Device published as \(candidate.name, privacy: .public) (attempt \(attempt))")
+        case .rename(let previous):
             failedName = nil
             UserDefaults.standard.set(candidate.name, forKey: Self.deviceNameKey)
-            log.info("Device renamed from \(previousName, privacy: .public) to \(candidate.name, privacy: .public) (attempt \(attempt))")
-        } else {
+            log.info("Device renamed from \(previous, privacy: .public) to \(candidate.name, privacy: .public) (attempt \(attempt))")
+        case .restore:
             log.info("Device restored as \(candidate.name, privacy: .public)")
+        }
+    }
+
+    private func failed(name: String, purpose: Purpose, reason: String) {
+        replacing = false
+        switch purpose {
+        case .rename(let previous):
+            failedName = name
+            log.fault("Rename to \(name, privacy: .public) failed: \(reason, privacy: .public); restoring \(previous, privacy: .public)")
+            publish(name: previous, purpose: .restore)
+        case .initial, .restore:
+            // Without a device the app can't reach the extension to ask again, so retry on a timer
+            // (12 times, a minute in all). Never crash: see `DeviceSource`.
+            log.fault("Publishing the device as \(name, privacy: .public) failed: \(reason, privacy: .public)")
+            guard publishRetries < 12 else { return }
+            publishRetries += 1
+            queue.asyncAfter(deadline: .now() + .seconds(5)) { [self] in
+                guard deviceSource == nil, !replacing else { return }
+                publish(name: name, purpose: purpose)
+            }
         }
     }
 

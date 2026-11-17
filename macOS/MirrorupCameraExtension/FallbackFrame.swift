@@ -105,7 +105,8 @@ struct FallbackFrame: @unchecked Sendable {
     private static func drawCentered(_ text: String, in context: CGContext, width: Int, baselineY: CGFloat, font: CTFont?, color: CGColor) {
         var attributes: [CFString: Any] = [kCTForegroundColorAttributeName: color]
         if let font { attributes[kCTFontAttributeName] = font }
-        let string = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString, attributes as CFDictionary)!
+        // Nil only on allocation failure; the frame then lacks this line rather than crashing.
+        guard let string = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString, attributes as CFDictionary) else { return }
         let line = CTLineCreateWithAttributedString(string)
         let lineWidth = CTLineGetTypographicBounds(line, nil, nil, nil)
         context.textPosition = CGPoint(x: (CGFloat(width) - CGFloat(lineWidth)) / 2, y: baselineY)
