@@ -158,6 +158,8 @@ public actor PTPUSBTransport<Pipe: PTPBulkPipe>: PTPTransport {
         var assembler = PTPContainerAssembler(maxContainerLength: maxContainerLength)
         var dataIn: Data?
         while true {
+            // Don't start another transfer for a caller that has gone away.
+            if Task.isCancelled { throw .transport(.cancelled) }
             let chunk: Data
             do {
                 chunk = try await pipe.read(maxLength: readChunkSize, timeout: try remaining())

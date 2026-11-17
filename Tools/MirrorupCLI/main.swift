@@ -65,7 +65,7 @@ struct Arguments {
     }
 }
 
-struct MirrorupCLI {
+enum MirrorupCLI {
     static func main() async {
         do {
             let args = try Arguments(Array(CommandLine.arguments.dropFirst()))

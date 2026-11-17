@@ -69,6 +69,20 @@ While the camera is absent the engine waits 3 s for discovery, then backs off wi
   delivered FPS and frame age in Diagnostics. Both need the Camera Extension active, which was not
   possible on the managed development Mac (see `usb-feasibility.md` and the README).
 
+## App CPU (menu-bar app, real camera, debug build)
+
+Measured with `top` while streaming, popover closed:
+
+| Change | App CPU (one core = 100%) |
+|---|---|
+| Camera metadata formatted every second and published in status; Camera window open | ~43% |
+| Metadata read only on request (popover / Camera Info / Refresh / export) | ~19.8% |
+| Menu-bar icon stored and updated only on change (it was re-rendered with every 4 Hz status update, and AppKit re-snapshots the status item each time) | ~12.1% |
+| CLI benchmark, same capture path, for reference | 8.4% |
+
+The remaining gap to the CLI is the app's per-frame work: wrapping each frame for the CoreMediaIO
+sink and the preview. The preview renders only while its window is visible on screen.
+
 ## Optimisation decisions
 
 | Decision | Evidence |
@@ -79,6 +93,8 @@ While the camera is absent the engine waits 3 s for discovery, then backs off wi
 | Decode and scale in one VideoToolbox pass into pooled IOSurface buffers | No intermediate RGB image; the same buffer is handed to the extension with no copy. |
 | Single-slot buffers (engine, preview, CMIO sink queue size 1, extension relay) | Latency can't grow under a slow consumer; covered by `slowConsumerGetsFreshFramesAndDrops` and related tests. |
 | Extension forwards each sink frame immediately; the 30 Hz timer only fills gaps | A fixed-cadence re-stamp timer adds up to one frame interval (avg ~17 ms) of latency. |
+| Camera metadata formatted only on request, never per frame or on a timer | Formatting ~150 properties and diffing them in SwiftUI every second cost ~24 points of CPU in the app (table above). |
+| UI state that views branch on (`phase`, `menuBarIcon`) is stored and changes only with the state | Views that read the 4 Hz metrics are isolated (the live badge, the Diagnostics window). |
 | No disk I/O or logging per frame on the hot path | Per-frame events are signposts (Instruments) or bounded counters; logs are rate-limited summaries. |
 
 ## Profiling

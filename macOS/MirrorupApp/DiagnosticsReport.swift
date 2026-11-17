@@ -72,9 +72,10 @@ enum DiagnosticsReport {
 
         lines.append("== Virtual camera ==")
         lines.append("Extension: \(snapshot.extensionState)")
-        switch snapshot.sinkState {
-        case let .failed(message, detail): lines.append("Sink: failed — \(message) [\(detail)]")
-        default: lines.append("Sink: \(snapshot.sinkState)")
+        if case let .failed(message, detail) = snapshot.sinkState {
+            lines.append("Sink: failed — \(message) [\(detail)]")
+        } else {
+            lines.append("Sink: \(snapshot.sinkState)")
         }
         let counters = snapshot.sinkCounters
         lines.append("Sink enqueued=\(counters.enqueued) droppedQueueFull=\(counters.droppedQueueFull) enqueueFailures=\(counters.enqueueFailures) connects=\(counters.connects)")

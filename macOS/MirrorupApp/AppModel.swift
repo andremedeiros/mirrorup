@@ -54,6 +54,8 @@ final class AppModel {
     /// Info window opened, Refresh). Deliberately not kept current: formatting and diffing hundreds
     /// of rows continuously is costly.
     private(set) var cameraInfoDisplay: CameraInfoDisplay?
+    /// Bumped with every read: a constant-time change key for views reacting to new camera info.
+    private(set) var cameraInfoRevision = 0
     private(set) var cameraInfoReadAt: Date?
     private(set) var isReadingCameraInfo = false
     /// One line for the popover, e.g. "EF-S18-55mm f/4-5.6 IS STM · f/5.6 · 1/60 s · ISO 400",
@@ -224,6 +226,7 @@ final class AppModel {
         defer { isReadingCameraInfo = false }
         let info = await engine.cameraMetadata()
         cameraInfoDisplay = info.map(CameraInfoDisplay.init)
+        cameraInfoRevision += 1
         cameraInfoReadAt = Date()
         cameraSummary = info.flatMap(Self.summary)
     }

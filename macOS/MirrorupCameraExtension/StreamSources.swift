@@ -172,27 +172,27 @@ final class SinkStreamSource: NSObject, CMIOExtensionStreamSource, @unchecked Se
         guard let client else { return }
         stream.consumeSampleBuffer(from: client) { [weak self] sampleBuffer, sequenceNumber, _, _, error in
             guard let self else { return }
-            let current = self.state.withLockUnchecked { $0.running && $0.generation == generation }
+            let current = state.withLockUnchecked { $0.running && $0.generation == generation }
             guard current else { return }
             if let sampleBuffer {
-                self.relay.storeSinkSample(sampleBuffer)
+                relay.storeSinkSample(sampleBuffer)
                 let output = CMIOExtensionScheduledOutput(
                     sequenceNumber: sequenceNumber,
                     hostTimeInNanoseconds: HostTime.nanoseconds(HostTime.now())
                 )
-                self.stream.notifyScheduledOutputChanged(output)
-                self.state.withLockUnchecked { $0.consecutiveEmpty = 0 }
-                self.consumeNext(generation: generation)
+                stream.notifyScheduledOutputChanged(output)
+                state.withLockUnchecked { $0.consecutiveEmpty = 0 }
+                consumeNext(generation: generation)
             } else {
-                let empty = self.state.withLockUnchecked { state -> Int in
+                let empty = state.withLockUnchecked { state -> Int in
                     state.consecutiveEmpty += 1
                     return state.consecutiveEmpty
                 }
                 if let error, empty == 1 {
-                    self.log.debug("Sink consume returned no buffer: \(error.localizedDescription, privacy: .public)")
+                    log.debug("Sink consume returned no buffer: \(error.localizedDescription, privacy: .public)")
                 }
                 let delayMilliseconds = 1 << min(empty - 1, 4)
-                self.retryQueue.asyncAfter(deadline: .now() + .milliseconds(delayMilliseconds)) { [weak self] in
+                retryQueue.asyncAfter(deadline: .now() + .milliseconds(delayMilliseconds)) { [weak self] in
                     self?.consumeNext(generation: generation)
                 }
             }

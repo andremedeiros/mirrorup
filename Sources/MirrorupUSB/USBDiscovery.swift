@@ -149,13 +149,15 @@ public enum USBDiscovery {
     }
 
     static func intProperty(_ entry: io_registry_entry_t, _ key: String) -> Int? {
-        guard let value = IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else { return nil }
-        return (value as? NSNumber)?.intValue
+        (property(entry, key) as? NSNumber)?.intValue
     }
 
     static func stringProperty(_ entry: io_registry_entry_t, _ key: String) -> String? {
-        guard let value = IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else { return nil }
-        return value as? String
+        property(entry, key) as? String
+    }
+
+    private static func property(_ entry: io_registry_entry_t, _ key: String) -> CFTypeRef? {
+        IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
     }
 
     static func ioReturn(from error: any Error) -> IOReturn {

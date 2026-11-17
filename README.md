@@ -68,8 +68,10 @@ See [docs/development.md](docs/development.md) for signing, identifiers and hard
 
 **App:** launch `/Applications/Mirrorup.app`. On first launch it asks macOS to install the Camera
 Extension. Approve it in System Settings → General → Login Items & Extensions → Camera Extensions,
-then choose **Mirrorup Camera** in your video app. The menu-bar icon shows the camera status and has
-start/stop, the preview, the live Camera info window and diagnostics.
+then choose **Mirrorup Camera** in your video app. Click the menu-bar icon for the live preview, the
+streaming switch and the camera's current lens and exposure. The ⋯ menu holds Camera Info (every
+setting the camera reports, searchable), Diagnostics and Settings (camera source, start streaming at
+launch, open at login, camera extension).
 
 **CLI:**
 

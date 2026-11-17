@@ -48,7 +48,7 @@ public enum CanonEventParser {
             return .propertyChanged(property: property, value: integerValue(valueBytes).map(CanonPropertyValue.integer) ?? .raw(valueBytes))
         case CanonEvent.availListChanged:
             let property = try r.u32()
-            _ = try r.u32()  // form type
+            try r.skip(4)  // form type
             let count = Int(try r.u32())
             guard count <= r.remaining / 4 else { throw .truncated(needed: count * 4, available: r.remaining) }
             var values: [UInt32] = []

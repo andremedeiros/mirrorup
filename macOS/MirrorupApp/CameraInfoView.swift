@@ -19,14 +19,16 @@ struct CameraInfoDisplay: Equatable {
         /// Options the camera accepts, already joined for display; nil when there is no choice.
         let options: String?
         let optionCount: Int
-        /// Long lists (capabilities) start collapsed behind their count.
-        let isList: Bool
+        /// Long lists (capabilities) start collapsed behind their element count; nil for plain values.
+        let listCount: Int?
         /// Lowercased label + value, for search.
         let searchText: String
     }
 
     let sections: [Section]
+}
 
+extension CameraInfoDisplay {
     init(_ metadata: CameraMetadata) {
         sections = metadata.documentedOnly.sections
             .sorted { $0.kind < $1.kind }
@@ -39,7 +41,7 @@ struct CameraInfoDisplay: Equatable {
                         raw: item.raw,
                         options: item.allowedValues.count > 1 ? item.allowedValues.joined(separator: ", ") : nil,
                         optionCount: item.allowedValues.count,
-                        isList: section.kind == .capabilities,
+                        listCount: section.kind == .capabilities ? item.value.split(separator: ",").count : nil,
                         searchText: "\(item.label) \(item.value)".lowercased()
                     )
                 })
@@ -56,15 +58,41 @@ struct CameraInfoDisplay: Equatable {
     }
 }
 
+/// Search over the display model. Results and the coarse state are stored, so typing re-renders only
+/// what reads them, and the window's structure changes only when `state` does.
+@MainActor
+@Observable
+final class CameraInfoSearch {
+    enum State: Equatable { case noCamera, noMatches, results }
+
+    var query = "" {
+        didSet { update() }
+    }
+    private(set) var results: [CameraInfoDisplay.Section] = []
+    private(set) var state = State.noCamera
+    private var display: CameraInfoDisplay?
+
+    func setDisplay(_ display: CameraInfoDisplay?) {
+        self.display = display
+        update()
+    }
+
+    private func update() {
+        results = display?.filtered(by: query) ?? []
+        state = display == nil ? .noCamera : (results.isEmpty ? .noMatches : .results)
+    }
+}
+
 /// Everything the camera reports, in human terms. Read when the window opens and on Refresh, never
 /// continuously.
 struct CameraInfoView: View {
     let model: AppModel
-    @State private var query = ""
+    @State private var search = CameraInfoSearch()
 
     var body: some View {
-        CameraInfoContent(display: model.cameraInfoDisplay, readAt: model.cameraInfoReadAt, query: query)
-            .searchable(text: $query, placement: .toolbar, prompt: "Search settings")
+        CameraInfoResults(search: search, readAt: model.cameraInfoReadAt)
+            .overlay { CameraInfoEmptyState(state: search.state) }
+            .searchable(text: $search.query, placement: .toolbar, prompt: "Search settings")
             .toolbar {
                 ToolbarItem {
                     Button("Refresh", systemImage: "arrow.clockwise") {
@@ -75,39 +103,48 @@ struct CameraInfoView: View {
                 }
             }
             .task { await model.refreshCameraInfo() }
+            .onChange(of: model.cameraInfoRevision, initial: true) {
+                search.setDisplay(model.cameraInfoDisplay)
+            }
             .frame(minWidth: 440, minHeight: 400)
     }
 }
 
-private struct CameraInfoContent: View {
-    let display: CameraInfoDisplay?
+private struct CameraInfoResults: View {
+    let search: CameraInfoSearch
     let readAt: Date?
-    let query: String
 
     var body: some View {
-        let sections = display?.filtered(by: query) ?? []
-        if sections.isEmpty {
-            if display == nil {
-                ContentUnavailableView(
-                    "No Camera Connected",
-                    systemImage: "camera",
-                    description: Text("Turn on streaming with the camera connected, then press Refresh.")
-                )
-            } else {
-                ContentUnavailableView.search(text: query)
+        Form {
+            ForEach(search.results) { section in
+                CameraInfoSection(section: section)
             }
-        } else {
-            Form {
-                ForEach(sections) { section in
-                    CameraInfoSection(section: section)
-                }
-                if let readAt {
-                    Text("Read at \(readAt.formatted(date: .omitted, time: .standard))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            if let readAt, !search.results.isEmpty {
+                Text("Read at \(readAt.formatted(date: .omitted, time: .standard))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .formStyle(.grouped)
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Shown over the (empty) form; `state` changes only when results appear or disappear.
+private struct CameraInfoEmptyState: View {
+    let state: CameraInfoSearch.State
+
+    var body: some View {
+        switch state {
+        case .noCamera:
+            ContentUnavailableView(
+                "No Camera Connected",
+                systemImage: "camera",
+                description: Text("Turn on streaming with the camera connected, then press Refresh.")
+            )
+        case .noMatches:
+            ContentUnavailableView.search
+        case .results:
+            EmptyView()
         }
     }
 }
@@ -119,7 +156,7 @@ private struct CameraInfoSection: View {
         Section(section.kind.title) {
             ForEach(section.rows) { row in
                 CameraInfoRow(label: row.label, value: row.value, raw: row.raw,
-                              options: row.options, optionCount: row.optionCount, isList: row.isList)
+                              options: row.options, optionCount: row.optionCount, listCount: row.listCount)
             }
         }
     }
@@ -131,15 +168,15 @@ private struct CameraInfoRow: View {
     let raw: String
     let options: String?
     let optionCount: Int
-    let isList: Bool
+    let listCount: Int?
     @State private var isExpanded = false
 
     var body: some View {
-        if isList {
+        if let listCount {
             DisclosureGroup(isExpanded: $isExpanded) {
                 DetailText(text: value)
             } label: {
-                LabeledContent(label, value: "\(value.split(separator: ",").count)")
+                LabeledContent(label, value: "\(listCount)")
             }
         } else if let options {
             DisclosureGroup(isExpanded: $isExpanded) {

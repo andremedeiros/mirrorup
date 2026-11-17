@@ -16,9 +16,7 @@ public enum CanonCatalog {
 
     /// Standard PTP/MTP event or Canon EOS GetEvent record name. EOS records are u32-coded.
     public static func eventName(_ code: UInt32) -> String? {
-        if let name = events[code] { return name }
-        guard let code16 = UInt16(exactly: code) else { return nil }
-        return PTPCatalog.eventName(code16)
+        events[code] ?? UInt16(exactly: code).flatMap(PTPCatalog.eventName)
     }
 
     public static func responseName(_ code: UInt16) -> String? {
@@ -31,9 +29,7 @@ public enum CanonCatalog {
 
     /// Canon EOS or standard device property name ("EVF Sharpness", "Battery Level").
     public static func propertyName(_ code: UInt32) -> String? {
-        if let spec = propertySpecs[code] { return spec.label }
-        guard let code16 = UInt16(exactly: code) else { return nil }
-        return PTPCatalog.propertyName(code16)
+        propertySpecs[code]?.label ?? UInt16(exactly: code).flatMap(PTPCatalog.propertyName)
     }
 
     /// "Name (0xHEX)", or just the hex when no reference names the code.

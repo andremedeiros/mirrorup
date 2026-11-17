@@ -214,9 +214,9 @@ final class VirtualCameraSink: @unchecked Sendable {
     /// Fallback when the property listener cannot be installed: re-check the device list every 2 s.
     private func pollDevices() {
         control.asyncAfter(deadline: .now() + .seconds(2)) { [weak self] in
-            guard let self, self.active, self.devicesListener == nil else { return }
-            self.refresh()
-            self.pollDevices()
+            guard let self, active, devicesListener == nil else { return }
+            refresh()
+            pollDevices()
         }
     }
 

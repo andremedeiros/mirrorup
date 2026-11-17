@@ -67,7 +67,6 @@ public enum CanonBackendFactory {
             camera.usbVendorID == Int32(USBDiscovery.canonVendorID)
                 && camera.capabilities.contains(ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue)
         }, timeout: timeout)
-        guard let camera else { return nil }
-        return (ImageCapturePTPTransport(camera: camera), camera.name ?? "Canon camera")
+        return camera.map { (ImageCapturePTPTransport(camera: $0), $0.name ?? "Canon camera") }
     }
 }
