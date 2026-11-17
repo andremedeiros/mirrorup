@@ -96,11 +96,12 @@ struct CaptureLoop: Sendable {
             }
             core.recordAcquisition(frame)
 
+            // Includes the orientation pass, so decode metrics cover everything before publish.
             let decodeStart = HostTime.now()
             let signpost = Diagnostics.signposter.beginInterval("Decode")
             let decoded: DecodedFrame
             do {
-                decoded = try decoder.decode(frame, sequence: core.nextSequence())
+                decoded = try decoder.decode(frame, sequence: core.nextSequence(), orientation: core.orientation)
             } catch {
                 Diagnostics.signposter.endInterval("Decode", signpost)
                 core.apply(.failed(error), generation: generation)

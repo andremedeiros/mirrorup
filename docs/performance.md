@@ -95,6 +95,7 @@ sink and the preview. The preview renders only while its window is visible on sc
 | Extension forwards each sink frame immediately; the 30 Hz timer only fills gaps | A fixed-cadence re-stamp timer adds up to one frame interval (avg ~17 ms) of latency. |
 | Camera metadata formatted only on request, never per frame or on a timer | Formatting ~150 properties and diffing them in SwiftUI every second cost ~24 points of CPU in the app (table above). |
 | UI state that views branch on (`phase`, `menuBarIcon`) is stored and changes only with the state | Views that read the 4 Hz metrics are isolated (the live badge, the Diagnostics window). |
+| Mirror / upside down via `VTPixelRotationSession` after decode, skipped entirely when off | Measured during development at about 1.4 ms per 1280×720 frame for the rotation call (2–2.7 ms median added in the pipeline, debug build, M1 Pro); zero cost with the default orientation. Not yet recorded in `benchmarks/`. |
 | No disk I/O or logging per frame on the hot path | Per-frame events are signposts (Instruments) or bounded counters; logs are rate-limited summaries. |
 
 ## Profiling

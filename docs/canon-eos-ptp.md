@@ -2,7 +2,7 @@
 
 This file collects what Mirrorup needs to know to run live view on Canon EOS DSLRs over PTP,
 with the Rebel SL2 / 200D (USB `0x04A9:0x32CC`) as the target body. It is written from
-protocol knowledge. No code was copied from anywhere (see [Licensing](#11-licensing)).
+protocol knowledge. No code was copied from anywhere (see [Licensing](#12-licensing)).
 
 ## Provenance tags
 
@@ -12,7 +12,7 @@ Every claim carries one of these tags:
 |---|---|
 | **Verified** | Verified (SL2 hardware): observed on the real SL2 through ImageCaptureCore `requestSendPTPCommand` pass-through. |
 | **Ref(`file`:`function`)** | Reference (libgphoto2 `camlibs/ptp2/<file>`:`<function>`, master as of 2026-11-16). For bare `#define` tables it reads **Ref(`ptp.h`)**. |
-| **Ext(source)** | Public reverse-engineering write-up, listed in [Sources](#12-sources). Not libgphoto2, and not seen on the SL2. |
+| **Ext(source)** | Public reverse-engineering write-up, listed in [Sources](#13-sources). Not libgphoto2, and not seen on the SL2. |
 | **Hyp** | Hypothesis. Not confirmed. Test it on hardware before relying on it. |
 
 Byte order is little-endian everywhere. "u32" means an unsigned 32-bit LE integer.
@@ -276,7 +276,9 @@ Events that need action in Mirrorup (**Hyp**, derived from the meanings above):
   playback). Rewrite `0xD1B0`.
 - `0xC18D` or `0xC18E`: auto power-off is imminent. Send KeepDeviceOn now.
 - `0xC18B` = 1: the body is busy. Expect `0xA102`/`0x2019` replies and back off.
-- `0xC181`/`0xC186`: an image was shot on the body. Ignore it; Mirrorup does not download.
+- `0xC181`/`0xC1A7`/`0xC186`/`0xC1A9`: a file was created. Ignored, except while
+  `capturePhoto()` waits for its own shot (§11.6); `CanonEventParser` keeps handle, storage, format,
+  size and name.
 
 ## 6. Response codes
 
@@ -331,7 +333,9 @@ Events that need action in Mirrorup (**Hyp**, derived from the meanings above):
 Firmware versions tested: 1.0.1 and 1.1.0 (DeviceInfo `DeviceVersion` `3-1.0.1` / `3-1.1.0`); both
 expose the same 170 operations. **Verified**
 
-## 8. Exposure and focus controls (for later)
+## 8. Exposure and focus controls (reference)
+
+What Mirrorup's controls actually send, and what the SL2 answered, is in §11.
 
 All writes go through `0x9110` (§3.4). Allowed values arrive as `0xC18A` lists. Use those lists
 rather than hard-coded tables.
@@ -463,7 +467,197 @@ loop:
 | `0x9152` | TerminateViewfinder | **Verified** (`0x2005` on the SL2) |
 | `0x9153` | GetViewFinderData | **Verified** |
 
-## 11. Licensing
+## 11. User camera controls (`CanonCamera: CameraControlling`)
+
+Implementation: `Sources/MirrorupCanon/CanonControls.swift`. Every command goes through the same
+`PTPSession` gate as frame polling, and nothing is polled for the controls: the state is computed
+only when `controlState()` is called. Hardware session 2026-11-16 on the SL2, firmware 1.1.0,
+EF-S 18-55mm f/4-5.6 IS STM, a memory card (StorageID `0x00020001`), over the ImageCaptureCore
+pass-through. The mode dial was first on Scene Intelligent Auto (`0xD138` = `0x16`) and then on
+P (`0x00`). Every setting that was changed was put back. Each session ended with `0xD1B0` restored,
+zoom at 1×, SetEventMode(0) and SetRemoteMode(0).
+
+### 11.1 Control state
+
+`controlState()` drains GetEvent once, then builds everything from the property cache and the
+latest parsed live-view frame.
+
+| Control | Source | Notes | Provenance |
+|---|---|---|---|
+| Aperture / shutter / ISO / exposure compensation / white balance / picture style / AF method | `0xD101` / `0xD102` / `0xD103` / `0xD104` / `0xD109` / `0xD110` / `0xD1BA`: value from `0xC189`, options from `0xC18A` in the camera's order | Titles come from `CanonCatalog.optionTitle` (the same tables as the metadata). Undocumented values are not offered as options. | Lists **Verified** |
+| Color temperature | `0xD10A` | Offered only when white balance is Color Temperature (`9`). The SL2 sends a 76-value list, 2500–10000 K in 100 K steps, in both modes even when white balance is Auto. Its P-mode white-balance list (`0, 0x17, 1, 8, 2, 3, 4, 5, 6`) has no `9`, so color temperature is never adjustable on the SL2. | **Verified** |
+| Battery | `0xD111` | `2` = "100%" on the SL2. "Low" is `0`, the lowest level libgphoto2 names; `batteryIsLow` is true for it. | Value **Verified**; low code **Ref(`config.c`:`_get_Canon_EOS_BatteryLevel`)** |
+| Shots remaining | `0xD11B` | 5221 with the card in. The test fixture was captured with 0. | **Verified** |
+| canAutofocus | live view, `0x9154` listed, `0xD1A8` ≠ 0 (lens), `0xD108` ≠ 3 (lens switch not at MF) | | Ops listed: **Verified**; MF rule **Ext(FC.SDK)** |
+| canFocusAtPoint | canAutofocus, `0x9159` listed, AF method = 1-point (`1`), frame geometry known | | **Verified** (§11.4) |
+| zoom | magnification from block `0x4`, nil when not in live view, `0x9158` not listed, or AF method = Face + Tracking | | **Verified** (§11.5) |
+| canCapturePhoto | `0x9128`/`0x9129` listed and `0xD11B` > 0 | Capture does not work on the SL2 yet (§11.6) | **Verified** (listed) |
+
+Allowed lists by mode (**Verified**):
+
+| Property | Scene Intelligent Auto | P |
+|---|---|---|
+| `0xD101` Av, `0xD102` Tv, `0xD103` ISO | empty | empty |
+| `0xD104` exposure compensation | empty | 19 values, −3…+3 EV in 1/3 steps |
+| `0xD109` white balance | empty | `0, 0x17, 1, 8, 2, 3, 4, 5, 6` |
+| `0xD110` picture style | empty | `0x87, 0x81, 0x82, 0x83, 0x88, 0x84, 0x85, 0x86, 0x21, 0x22, 0x23` |
+| `0xD1BA` AF method | `2, 4, 1` | `2, 4, 1` |
+
+- `0xD101`/`0xD102` read 0 (Auto) and change to the metered value during AF/AE (`0x28` f/4,
+  `0x60` 1/30 s), then go back to 0. **Verified**
+- `0xD1BA` titles come from EDSDK Evf_AFMode: 2 Face + Tracking, 4 Zone AF, 1 1-point AF. The SL2's
+  own menu calls them "Face+Tracking", "Smooth zone AF" and "Live 1-point AF". Matching 4 to "Smooth
+  zone AF" is **Hyp**: the EDSDK name differs.
+
+### 11.2 Changing a setting
+
+`set(_:to:)` refuses values that are not in the current options without sending anything. Then it
+sends SetDevicePropValueEx `0x9110` `[12][prop][value]`, a 4-byte slot for every width (§3.4), and
+drains GetEvent until the property comes back with the new value (at most 1 s).
+
+| Write | Mode | Response | Echo | Provenance |
+|---|---|---|---|---|
+| `0xD110` = `0x81`, `0xD109` = `1` | Scene Intelligent Auto | `0x2019` DeviceBusy, value unchanged | none | **Verified** |
+| `0xD1BA` 2 → 1 → 2 | both | `0x2001` in 15–30 ms | `0xD1BA` in the next GetEvent (~8 ms), together with `0xD1C9`, `0xD13C`, `0xD108` | **Verified** |
+| `0xD110` `0x82` → `0x81` → `0x82` | P | `0x2001` | `0xD110` | **Verified** |
+| `0xD109` `0x17` → `1` → `0x17` | P | `0x2001` | `0xD109`, plus `0xD1B4` (EVF white balance) following it | **Verified** |
+| `0xD104` 0 → `0x08` (+1 EV) → 0 | P | `0x2001` | `0xD104`, `0xD1C3` | **Verified** |
+| `0xD1BA` while AF is held (DoAf without AfCancel) | P | `0x2019` | none | **Verified** |
+
+With the full implementation, each `set` round trip took 47–84 ms. **Verified**. `0x2019` is
+reported as "The camera is busy or doesn't allow this change in its current mode.", and `0xA005` as
+a refusal with the "shooting mode, no menu" hint. Raw codes go into `detail`.
+
+### 11.3 Autofocus
+
+`autofocus()` sends DoAf `0x9154` (no parameters), waits for the AF result in the live-view frames,
+then sends AfCancel `0x9160` and drains GetEvent.
+
+- DoAf returns `0x2001` in about 8 ms, on acceptance. Metering events follow within ~100 ms.
+  **Verified**
+- **The body holds AF until AfCancel.** While held, SetDevicePropValueEx, Zoom and the
+  RemoteReleaseOn full press all answer `0x2019`. AfCancel answers `0x2001`. **Verified**. This is
+  why `autofocus()` always ends with AfCancel.
+- Result in 1-point AF: block `0x8` holds one frame. Its state goes `0x10` (rest) → `0x11` (in
+  focus) 0.3–0.6 s after DoAf, or → `0x12`, which no source names; it showed up when focusing on a
+  plain wall. The wait ends on either. Block `0x7` (AF activity) stayed `1` throughout, so the SL2
+  does not report AF through it. **Verified**
+- Face + Tracking: block `0x8` is a 7×7 grid of 49 entries (each 649×399), all state 0. After AF,
+  some entries change to `0x1` (three after one AF) and the rest to `0x10`. The wait ends when an
+  entry leaves 0/`0x10`, or after 2 s. States: **Verified**. That `0x1` marks the points that
+  focused: **Hyp**.
+- Timings with the full implementation: 0.28–0.61 s in 1-point AF and 0.61–2.07 s in Face + Tracking.
+  That AF really moved the focus was checked from saved frames in §11.4. **Verified**
+- Whether an AfCancel sent 9 ms after DoAf cuts the drive short could not be told from the frames:
+  not determined.
+
+### 11.4 Focus at a point
+
+The SL2 moves its live-view AF point with **ZoomPosition `0x9159`(x, y)** in 1-point AF. The
+parameters are the top-left corner of the magnifier, in sensor pixels. In 1-point AF the AF frame
+follows the magnifier, which matches FC.SDK's 6D finding. `focus(at:)` moves it, waits until a frame
+shows the magnifier moved, then runs §11.3.
+
+| Step | Observed on the SL2 | Provenance |
+|---|---|---|
+| Before | block `0xD` magnifier 1200×800 at (2388,1576); block `0x8` AF frame 1200×1200 at (2388,1376) | **Verified** |
+| ZoomPosition(1000,1000) at 1× | `0x2001`; magnifier → (980,1000); AF frame → (980,800); the zoom rect `0x12` stays 0,298 5976×3356 | **Verified** |
+| ZoomPosition(0,0) / (4776,3152) at 5× | lands at (332,186) / (4444,2966). The body clamps to an inset box, as on the 6D | **Verified** |
+| `focus(at: 0.15,0.2)` → sends (296,569) | lands at (588,576), AF frame state `0x11`, background wall in focus | **Verified** (frames saved and compared) |
+| `focus(at: 0.6,0.45)` → sends (2986,1408) | lands at (2964,1384), subject in focus | **Verified** |
+| TouchAfPosition `0x915B`(type 0/1/2, 1500, 1500) | `0x2001` each time, but blocks `0x5`/`0x8`/`0xD` did not change. Sent while AF was held, so a second try with AF released would settle it | **Verified** (no visible effect); not used |
+| ZoomPosition sent ~4 ms after AfCancel | ignored once (the magnifier did not move) | **Verified**. `focus(at:)` sends it once more if no frame shows the move within 1 s |
+
+#### Mapping (pure functions in `CanonControls.swift`, tested against the fw 1.1.0 fixture)
+
+1. The live-view JPEG shows exactly the area in block `0x12`: 1024×576 ↔ 5976×3356 at (0,298) at 1×,
+   1200×800 ↔ the 1200×800 crop at 5× (**Verified**). At 10× the camera still sends the 5× image
+   (JPEG 1200×800, same field as 5×) while `0x12` reports a 600×400 area. The visible area is
+   therefore taken as `0x12` scaled by magnification/5 (**Verified**, frames compared; EDSDK
+   documents the same for Evf_Zoom).
+2. sensor point = area origin + normalized point × area size.
+3. magnifier size = block `0xD` when it is non-zero (1200×800 in 1-point AF), otherwise sensor/5
+   (EDSDK Evf_ZoomPosition note). In Face + Tracking block `0xD` is all zero. **Verified**
+4. origin = sensor point − size/2, clamped to `[0, sensor − size]`. The body discards positions
+   beyond that range instead of clamping them (**Ext(FC.SDK)**), so they are never sent. The body
+   applies its own inset and step on top (**Verified**).
+
+Only 1-point AF supports focusing at a point. In Face + Tracking and Zone AF `canFocusAtPoint` is
+false, and `focus(at:)` reports that it needs the 1-point AF focus mode.
+
+### 11.5 Zoom
+
+`setZoom(_:center:)`: if a center is given and the zoom is not 1×, ZoomPosition centres the magnifier
+there (as in §11.4). Then Zoom `0x9158`(1/5/10), then a wait for block `0x4` to report the new
+magnification.
+
+| Command | Observed | Provenance |
+|---|---|---|
+| Zoom(5) in Face + Tracking | `0x2019`, nothing changes (the camera's own UI disables magnify in that mode too) | **Verified**. `setZoom` refuses up front |
+| Zoom(5) in 1-point AF | `0x2001`. About 0.5 s later the frames are **1200×800** (from 1024×576); block 4 = 5; `0x12` = `0xD` = 1200×800 at the magnifier (2388,1576 when centred) | **Verified** |
+| Zoom(10) | `0x2001`; JPEG **still 1200×800**, showing the same field as 5×; block 4 = 10; `0x12` = 600×400 at the 5× origin; `0xD` = 600×400 centred inside it | **Verified** |
+| ZoomPosition at 5× | pans the crop (table in §11.4) | **Verified** |
+| Zoom(1) | `0x2001`; frames back to 1024×576; the magnifier keeps its last position | **Verified** |
+
+Timings with the full implementation, frame confirmation included: 0.42–1.44 s per `setZoom`.
+**Verified**
+
+### 11.6 Photo capture: does not fire on the SL2 yet
+
+Implemented sequence, after libgphoto2's regular-EOS path (**Ref(`library.c`:`camera_trigger_canon_eos_capture`, `camera_canon_eos_capture`)**):
+
+1. GetStorageIDs `0x9101`. An empty list gives "Insert a memory card to take photos." without
+   pressing the shutter. Capture destination `0xD11C` is left as the user set it (2 = card).
+2. Drain GetEvent, start collecting ObjectAdded/RequestObjectTransfer records, and suspend frame
+   polling and the frame timeout (`shutterCycleActive`).
+3. RemoteReleaseOn `0x9128`(1, 0) half press, then GetEvent for 600 ms while AF/AE settle.
+4. RemoteReleaseOn(2, 0) full press. A non-zero first response parameter means the release failed.
+   Then RemoteReleaseOff `0x9129`(2) and RemoteReleaseOff(1), also after a failure, so the body is
+   never left half-pressed.
+5. Wait up to 15 s for `0xC181`/`0xC1A7` (card) or `0xC186`/`0xC1A9` (RAM). Then GetObject
+   `0x1009`(handle) with a 60 s timeout. TransferComplete `0x9117` is sent only for RAM objects
+   (storage 0), as libgphoto2 does. The file name comes from the record, or from GetObjectInfo when
+   the record has none.
+
+Steps 1–4 ran on the SL2. Step 5 never could: **the SL2 never released the shutter.**
+
+| Attempt (live view on unless stated) | Response | Provenance |
+|---|---|---|
+| GetStorageIDs `0x1004` / `0x9101` | `0x2001`, `[0x00020001]`; GetStorageInfo answers 36 bytes | **Verified** |
+| RemoteReleaseOn(1,0) | `0x2001`, parameter 0; AF/AE events follow; the AF frame reaches `0x11` (focused) in 1-point AF | **Verified** |
+| RemoteReleaseOn(2,0) | `0x2001`, **parameter `0xC`**; no ObjectAdded, no CameraStatusChanged, `0xD11B` unchanged | **Verified** (Scene Intelligent Auto and P) |
+| RemoteReleaseOn(3,0) and (3,1) (full press with AF / MF) | `0x2001`, parameter `0xC` | **Verified** |
+| EOS Capture `0x910F` | `0x2001`, parameter `0xC` | **Verified** |
+| After SetUILock `0x911B`, or after SetRequestOLCInfoGroup `0x913D`(`0x1FFF`) | `0x2001`, parameter `0xC` | **Verified** |
+| Live view off (`0xD1B0` = 0): RemoteReleaseOn(1,0) | `0x2019` after 5.0 s, parameter 1; full press `0x2019` | **Verified** |
+| RemoteReleaseOff(2) / (1) / (3) | `0x2001` | **Verified** |
+
+State of the camera during these attempts: card present (5221 shots, `0xD11C` = 2, allowed
+`2, 6, 4`), battery `0xD111` = 2 (100%), lens attached (`0xD1A8` = 1), mirror lockup `0xD1BF` = 0,
+AF mode `0xD108` = 2 in Scene Intelligent Auto / 0 in P. No public source names release result
+`0xC`: libgphoto2 knows 1 (no focus), 3 (mirror up), 7 (card full) and 8 (card read-only). What the
+rear screen showed was not recorded. Until a hardware session explains `0xC`, `capturePhoto()`
+reports "The camera did not take the photo. Check the camera's screen for a message." with the code
+in `detail`. **The download path, the object-record offsets and the suspended frame timeout are not
+verified on hardware.** The simulator tests cover them only.
+
+### 11.7 What the UI must know
+
+- In Scene Intelligent Auto, only the AF method is adjustable. Exposure, white balance and picture
+  style have no options, and writes would be refused.
+- In P, exposure compensation, white balance and picture style are adjustable. Aperture, shutter and
+  ISO are not (empty lists). Color temperature never is on the SL2.
+- Focusing at a point and zooming need the 1-point AF method. Face + Tracking (the SL2's default)
+  allows only whole-frame `autofocus()`. The UI can offer to switch the AF method first.
+- Zoom changes the stream's frame size (1024×576 at 1×, 1200×800 at 5× and 10× on the SL2). At 10×
+  the camera sends the 5× image, so the app has to crop its centre half to show 10× (the magnifier
+  rect is that area). Points for `focus(at:)` and `setZoom(center:)` are normalized to the frame the
+  camera actually sends, at every zoom level.
+- `autofocus()` / `focus(at:)` return after the AF result, in 0.3–0.6 s in 1-point AF and up to 2 s
+  in Face + Tracking. Run them off the main actor; frames keep flowing meanwhile.
+- `capturePhoto()` currently fails on the SL2 (§11.6). Show its `message`.
+
+## 12. Licensing
 
 libgphoto2 is licensed under LGPL-2.1-or-later. Mirrorup links nothing from it and copies none of
 its code. It served only as protocol documentation: the opcode, property, event and response
@@ -472,7 +666,7 @@ FC.SDK and julianschroden.com write-ups were also used as descriptive references
 implementation must be written from this document and the hardware observations, not from those
 sources.
 
-## 12. Sources
+## 13. Sources
 
 - libgphoto2 `camlibs/ptp2/`: `ptp.h`, `ptp.c`, `ptp-pack.c`, `library.c`, `config.c`,
   `ptp-private.h`, `ptp-bugs.h` (master, fetched 2026-11-16):

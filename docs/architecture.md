@@ -75,6 +75,23 @@ source documents it.
   CLI's text output show `documentedOnly`. `mirrorup camera info --json`, the snapshot sidecar and the
   diagnostics export keep everything, including undocumented codes.
 
+## Camera controls
+
+`CameraControlling` (`MirrorupCapture/CameraControls.swift`) is an optional backend capability:
+settings (`CameraSetting`: aperture, shutter, ISO, brightness/exposure compensation, white balance,
+colour temperature, Picture Style, AF method) with the options the camera currently allows,
+autofocus, focus at a point, live-view zoom, and photo capture. `CaptureEngine.controls()` returns the
+active backend when it conforms. `CanonCamera` implements it with Canon PTP commands (see
+`canon-eos-ptp.md`, Controls); the commands go through the same `PTPSession` gate as frame polling,
+so they interleave safely with streaming.
+
+- Control state is read on demand only: when the popover opens and after each change.
+- Points are normalized to the camera's live-view frame. The app maps a click on the 16:9 preview
+  back to that frame by undoing mirroring/rotation (`FrameOrientation.cameraPoint`) and the centre
+  crop.
+- Mirror and upside down are app-side (`CaptureEngine.setOrientation`), applied after decoding with
+  `VTPixelRotationSession`, and skipped entirely when off.
+
 ## Capture state machine
 
 ```mermaid

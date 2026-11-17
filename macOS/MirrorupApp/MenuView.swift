@@ -16,6 +16,9 @@ struct MenuView: View {
                 phase: model.phase,
                 isStreaming: $model.isStreaming
             )
+            if model.phase == .live {
+                CameraControlsView(model: model)
+            }
             AttentionView(model: model)
             Divider()
             MenuFooter(isAvailable: model.isVirtualCameraAvailable)
@@ -23,7 +26,10 @@ struct MenuView: View {
         .padding()
         .frame(width: 340)
         // Opening the popover is the user asking what the camera is doing.
-        .task { await model.refreshCameraInfo() }
+        .task {
+            await model.refreshCameraInfo()
+            await model.refreshControls()
+        }
     }
 }
 
@@ -32,9 +38,25 @@ struct MenuView: View {
 private struct LivePreview: View {
     let model: AppModel
     let phase: AppModel.Phase
+    @State private var size = CGSize.zero
 
     var body: some View {
         PreviewView(renderer: model.preview)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .overlay {
+                // Clicks are taken by a SwiftUI layer: the AppKit preview view underneath ignores them.
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { location in
+                        guard phase == .live, size.width > 0, size.height > 0 else { return }
+                        model.previewClicked(at: CGPoint(x: location.x / size.width, y: location.y / size.height))
+                    }
+            }
+            .overlay {
+                if phase == .live, let feedback = model.focusFeedback {
+                    FocusIndicator(feedback: feedback, size: size)
+                }
+            }
             .overlay {
                 if phase != .live {
                     PreviewPlaceholder(phase: phase)
@@ -49,6 +71,62 @@ private struct LivePreview: View {
             .clipShape(.rect(cornerRadius: 10))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Camera preview")
+    }
+}
+
+/// A focus square where the user clicked (none for the Focus button) and a short status pill.
+/// White while focusing, green on a lock, yellow when the camera couldn't lock.
+private struct FocusIndicator: View {
+    let feedback: AppModel.FocusFeedback
+    let size: CGSize
+    @State private var pulse = false
+
+    private var color: Color {
+        switch feedback.state {
+        case .focusing, .unconfirmed: .white
+        case .focused: .green
+        case .notFocused, .failed: .yellow
+        }
+    }
+
+    private var status: String? {
+        switch feedback.state {
+        case .focusing: "Focusing…"
+        case .focused: "Focused"
+        case .notFocused: "Couldn't focus"
+        case .unconfirmed: "Focus done"
+        case .failed: nil  // the error appears under the controls
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if let point = feedback.point {
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(color, lineWidth: 1.5)
+                    .shadow(color: .black.opacity(0.6), radius: 1)
+                    .frame(width: 44, height: 44)
+                    .scaleEffect(feedback.state == .focusing && pulse ? 0.85 : 1)
+                    .position(x: point.x * size.width, y: point.y * size.height)
+            }
+            if let status {
+                Text(status)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.55), in: .capsule)
+                    .padding(.top, 8)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.15), value: feedback.state)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) { pulse = true }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(status ?? "")
     }
 }
 

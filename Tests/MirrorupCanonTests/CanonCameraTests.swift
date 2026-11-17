@@ -19,6 +19,18 @@ final class SimulatedSL2: PTPTransport, Sendable {
         var neverReady = false
         var disconnected = false
         var gvdDelay: Duration = .zero
+        /// Every command with its parameters, for control tests.
+        var commands: [(UInt16, [UInt32])] = []
+        /// Response codes to answer instead of OK, per opcode (one-shot).
+        var refusals: [UInt16: UInt16] = [:]
+        /// When false, SetDevicePropValueEx is acknowledged but never echoed.
+        var echoesPropertyWrites = true
+        var storageIDs: [UInt32] = [0x0002_0001]
+        /// First response parameter of a RemoteReleaseOn full press (0 = released).
+        var releaseResult: UInt32 = 0
+        /// GetEvent data queued when the full press is released (an ObjectAddedEx record).
+        var objectEventOnRelease: Data?
+        var objects: [UInt32: Data] = [:]
     }
 
     let state: Mutex<State>
@@ -35,18 +47,45 @@ final class SimulatedSL2: PTPTransport, Sendable {
     func close() async {}
 
     func execute(_ command: PTPCommand, transactionID: UInt32, dataOut: Data?, timeout: Duration) async throws(PTPError) -> PTPTransactionResult {
-        let (disconnected, delay) = state.withLock { s in
+        let (disconnected, delay, refusal) = state.withLock { s -> (Bool, Duration?, PTPResponseCode?) in
             s.log.append(command.code.rawValue)
-            return (s.disconnected, command.code.rawValue == 0x9153 ? s.gvdDelay : .zero)
+            s.commands.append((command.code.rawValue, command.parameters))
+            if let refusal = s.refusals.removeValue(forKey: command.code.rawValue) {
+                return (s.disconnected, Duration?.none, PTPResponseCode(refusal))
+            }
+            return (s.disconnected, command.code.rawValue == 0x9153 ? s.gvdDelay : .zero, PTPResponseCode?.none)
         }
         if disconnected { throw .transport(.disconnected("unplugged")) }
-        if delay > .zero { try? await Task.sleep(for: delay) }
+        if let refusal { return PTPTransactionResult(response: PTPResponse(code: refusal, transactionID: transactionID), data: Data()) }
+        if let delay, delay > .zero { try? await Task.sleep(for: delay) }
         func ok(_ data: Data = Data()) -> PTPTransactionResult {
             PTPTransactionResult(response: PTPResponse(code: .ok, transactionID: transactionID), data: data)
         }
         switch command.code.rawValue {
         case 0x1001: return ok(deviceInfo)
-        case 0x9114, 0x9115, 0x911D: return ok()
+        case 0x9114, 0x9115, 0x911D, 0x9154, 0x9160, 0x9158, 0x9159, 0x9117: return ok()
+        case 0x9101:
+            var w = PTPDataWriter()
+            let ids = state.withLock { $0.storageIDs }
+            w.u32(UInt32(ids.count))
+            ids.forEach { w.u32($0) }
+            return ok(w.data)
+        case 0x9128:
+            let result: UInt32 = command.parameters.first == 2 ? state.withLock { $0.releaseResult } : 0
+            return PTPTransactionResult(response: PTPResponse(code: .ok, transactionID: transactionID, parameters: [result]), data: Data())
+        case 0x9129:
+            if command.parameters.first == 2 {
+                state.withLock { s in
+                    if s.releaseResult == 0, let event = s.objectEventOnRelease { s.pendingEvents.append(event) }
+                }
+            }
+            return ok()
+        case 0x1009:
+            let handle = command.parameters.first ?? 0
+            guard let data = state.withLock({ $0.objects[handle] }) else {
+                return PTPTransactionResult(response: PTPResponse(code: .invalidObjectHandle, transactionID: transactionID), data: Data())
+            }
+            return ok(data)
         case 0x9116:
             let next = state.withLock { s in s.pendingEvents.isEmpty ? nil : s.pendingEvents.removeFirst() }
             return ok(next ?? Data([8, 0, 0, 0, 0, 0, 0, 0]))
@@ -58,6 +97,7 @@ final class SimulatedSL2: PTPTransport, Sendable {
             state.withLock { s in
                 s.propertyWrites.append((prop, value))
                 if prop == 0xD1B0 { s.evfOutput = value }
+                guard s.echoesPropertyWrites else { return }
                 var w = PTPDataWriter()
                 w.u32(16); w.u32(0xC189); w.u32(prop); w.u32(value)
                 w.u32(8); w.u32(0)

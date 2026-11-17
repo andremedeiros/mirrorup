@@ -27,6 +27,8 @@ final class CaptureCore: Sendable {
     private static let metricsInterval = HostTime.ticks(nanoseconds: 250_000_000)
 
     private let state = Mutex(State())
+    /// Separate from `state` so the per-frame read never contends with status updates. Survives runs.
+    private let orientationState = Mutex(FrameOrientation.normal)
     private let frames: LatestFrameBuffer
 
     init(frames: LatestFrameBuffer) {
@@ -36,6 +38,12 @@ final class CaptureCore: Sendable {
     var generation: UInt64 { state.withLock { $0.generation } }
 
     var isActive: Bool { state.withLock { $0.machine.state.isActive } }
+
+    /// Orientation applied to every frame decoded after it is set.
+    var orientation: FrameOrientation {
+        get { orientationState.withLock { $0 } }
+        set { orientationState.withLock { $0 = newValue } }
+    }
 
     /// Begins a new run (idle/failed -> discovering) and returns its generation.
     func beginRun(maxAttemptsBeforeFailing: Int?) -> UInt64 {

@@ -10,6 +10,7 @@ public enum CanonOperation {
     public static let setEventMode = PTPOperationCode(0x9115)
     public static let getEvent = PTPOperationCode(0x9116)
     public static let keepDeviceOn = PTPOperationCode(0x911D)
+    public static let transferComplete = PTPOperationCode(0x9117)
     public static let requestDevicePropValue = PTPOperationCode(0x9127)
     public static let remoteReleaseOn = PTPOperationCode(0x9128)
     public static let remoteReleaseOff = PTPOperationCode(0x9129)

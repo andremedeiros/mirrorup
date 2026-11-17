@@ -21,6 +21,8 @@ final class AppModel {
         static let source = "cameraSource"
         static let autoStart = "autoStartStreaming"
         static let lastCameraName = "lastCameraName"
+        static let mirrored = "mirrored"
+        static let upsideDown = "upsideDown"
     }
 
     var source: CameraSource {
@@ -63,6 +65,39 @@ final class AppModel {
     /// derived when camera info is read (never per frame).
     private(set) var cameraSummary: String?
 
+    /// Camera controls as of the last read (popover opened, or after a change). Never polled.
+    private(set) var controlState: CameraControlState?
+    private(set) var isApplyingControl = false
+    /// Last control or photo outcome for the popover ("Saved IMG_0042.JPG", or what went wrong).
+    private(set) var controlMessage: ControlMessage?
+
+    struct ControlMessage: Equatable {
+        enum Kind: Equatable { case success, failure }
+        let kind: Kind
+        let text: String
+        /// Set when the message refers to a saved file that can be revealed in Finder.
+        let fileURL: URL?
+    }
+
+    /// What the preview shows for the autofocus in progress or just finished; cleared shortly after.
+    private(set) var focusFeedback: FocusFeedback?
+
+    struct FocusFeedback: Equatable {
+        enum State: Equatable { case focusing, focused, notFocused, unconfirmed, failed }
+        let id: UUID
+        /// Where the user clicked, normalized to the preview; nil for the Focus button (whole frame).
+        let point: CGPoint?
+        var state: State
+    }
+
+    /// App-side orientation of the stream (preview and Mirrorup Camera), persisted.
+    var mirrored: Bool {
+        didSet { applyOrientation(); UserDefaults.standard.set(mirrored, forKey: Keys.mirrored) }
+    }
+    var upsideDown: Bool {
+        didSet { applyOrientation(); UserDefaults.standard.set(upsideDown, forKey: Keys.upsideDown) }
+    }
+
     /// Registered with launchd as a login item (System Settings › General › Login Items).
     var opensAtLogin: Bool {
         get { loginItemStatus == .enabled }
@@ -95,6 +130,8 @@ final class AppModel {
         let source = defaults.string(forKey: Keys.source).flatMap(CameraSource.init(rawValue:)) ?? .canon
         self.source = source
         autoStartStreaming = defaults.bool(forKey: Keys.autoStart)
+        mirrored = defaults.bool(forKey: Keys.mirrored)
+        upsideDown = defaults.bool(forKey: Keys.upsideDown)
         cameraAccess = AVCaptureDevice.authorizationStatus(for: .video)
         let box = OSAllocatedUnfairLock(initialState: source)
         sourceBox = box
@@ -103,7 +140,12 @@ final class AppModel {
         engine = CaptureEngine(makeBackend: { () async throws(CameraError) -> any CameraBackend in
             try await box.withLock { $0 }.makeBackend()
         })
+        applyOrientation()
         Task { await launch() }
+    }
+
+    private func applyOrientation() {
+        engine.setOrientation(FrameOrientation(mirrored: mirrored, upsideDown: upsideDown))
     }
 
     // MARK: Lifecycle
@@ -232,6 +274,159 @@ final class AppModel {
         cameraSummary = info.flatMap(Self.summary)
     }
 
+    // MARK: Camera controls (all on demand)
+
+    func refreshControls() async {
+        controlState = await engine.controls()?.controlState()
+    }
+
+    func set(_ setting: CameraSetting, to option: CameraSettingOption) {
+        runControl("set \(setting.rawValue)=\(option.title)") { controls in
+            self.controlState = try await controls.set(setting, to: option.value)
+        }
+    }
+
+    /// Picker binding: `$model[setting: .aperture]`. Writing a value the camera offers applies it.
+    subscript(setting setting: CameraSetting) -> UInt32 {
+        get { controlState?.settings[setting]?.current?.value ?? 0 }
+        set {
+            guard let option = controlState?.settings[setting]?.options.first(where: { $0.value == newValue }),
+                  option.value != controlState?.settings[setting]?.current?.value
+            else { return }
+            set(setting, to: option)
+        }
+    }
+
+    /// Zoom picker binding (`$model.zoomSelection`).
+    var zoomSelection: CameraZoom {
+        get { controlState?.zoom ?? .x1 }
+        set { if newValue != controlState?.zoom { setZoom(newValue) } }
+    }
+
+    func autofocus() {
+        runFocus(at: nil) { try await $0.autofocus() }
+    }
+
+    /// Shows the focusing indicator, runs the AF command, then shows its outcome for a moment.
+    private func runFocus(at previewPoint: CGPoint?,
+                          _ body: @escaping @MainActor (any CameraControlling) async throws -> AutofocusResult) {
+        let id = UUID()
+        runControl(previewPoint == nil ? "autofocus" : "focus at point") { controls in
+            self.focusFeedback = FocusFeedback(id: id, point: previewPoint, state: .focusing)
+            let state: FocusFeedback.State
+            do {
+                state = switch try await body(controls) {
+                case .focused: .focused
+                case .notFocused: .notFocused
+                case .unconfirmed: .unconfirmed
+                }
+            } catch {
+                self.finishFocus(id, .failed)
+                throw error
+            }
+            self.finishFocus(id, state)
+        }
+    }
+
+    private func finishFocus(_ id: UUID, _ state: FocusFeedback.State) {
+        guard focusFeedback?.id == id else { return }
+        focusFeedback?.state = state
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            if focusFeedback?.id == id { focusFeedback = nil }
+        }
+    }
+
+    func setZoom(_ zoom: CameraZoom) {
+        runControl("zoom \(zoom.title)") { controls in
+            self.controlState = try await controls.setZoom(zoom, center: nil)
+        }
+    }
+
+    /// A click on the preview: focus there, or, while zoomed in, move the magnified area there.
+    /// `point` is normalized to the displayed preview, (0, 0) top-left.
+    func previewClicked(at point: CGPoint) {
+        guard !isApplyingControl else { return }
+        guard let state = controlState else { return }
+        let cameraPoint = cameraFramePoint(fromPreview: point)
+        if let zoom = state.zoom, zoom != .x1 {
+            runControl("move zoom") { controls in
+                self.controlState = try await controls.setZoom(zoom, center: cameraPoint)
+            }
+        } else if state.canFocusAtPoint {
+            runFocus(at: point) { try await $0.focus(at: cameraPoint) }
+        }
+    }
+
+    func capturePhoto() {
+        runControl("take photo") { controls in
+            let photo = try await controls.capturePhoto()
+            let url = try Self.savePhoto(photo)
+            self.controlMessage = ControlMessage(kind: .success, text: "Saved \(url.lastPathComponent)", fileURL: url)
+        }
+    }
+
+    private func runControl(_ action: String, _ body: @escaping @MainActor (any CameraControlling) async throws -> Void) {
+        guard let controls = engine.controls(), !isApplyingControl else {
+            Diagnostics.app.notice("Camera control \(action, privacy: .public) ignored (no controls or another in progress)")
+            return
+        }
+        isApplyingControl = true
+        controlMessage = nil
+        Task {
+            defer { isApplyingControl = false }
+            let start = ContinuousClock.now
+            do {
+                try await body(controls)
+                Diagnostics.app.notice("Camera control \(action, privacy: .public) done in \(start.duration(to: .now).milliseconds, format: .fixed(precision: 0)) ms")
+            } catch let error as CameraError {
+                controlMessage = ControlMessage(kind: .failure, text: error.message, fileURL: nil)
+                Diagnostics.app.error("Camera control \(action, privacy: .public) failed: \(error.description, privacy: .public)")
+            } catch {
+                controlMessage = ControlMessage(kind: .failure, text: error.localizedDescription, fileURL: nil)
+                Diagnostics.app.error("Camera control \(action, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+            if controlState == nil || controlMessage?.kind == .failure {
+                await refreshControls()
+            }
+        }
+    }
+
+    /// Maps a point in the preview (the 16:9 output, after orientation) to the camera's live-view
+    /// frame: undo mirror/rotation, then undo the centre crop that fitted the camera image to 16:9.
+    private func cameraFramePoint(fromPreview point: CGPoint) -> CGPoint {
+        var p = FrameOrientation(mirrored: mirrored, upsideDown: upsideDown).cameraPoint(fromDisplayed: point)
+        guard let width = status.metrics.sourceWidth, let height = status.metrics.sourceHeight, width > 0, height > 0 else {
+            return p
+        }
+        let sourceAspect = Double(width) / Double(height)
+        let outputAspect = Double(VideoFormat.virtualCamera.width) / Double(VideoFormat.virtualCamera.height)
+        if sourceAspect > outputAspect {
+            let visible = outputAspect / sourceAspect
+            p.x = (1 - visible) / 2 + p.x * visible
+        } else {
+            let visible = sourceAspect / outputAspect
+            p.y = (1 - visible) / 2 + p.y * visible
+        }
+        return p
+    }
+
+    /// Saves into ~/Pictures/Mirrorup, never overwriting an existing file.
+    private static func savePhoto(_ photo: CapturedPhoto) throws -> URL {
+        let folder = URL.picturesDirectory.appending(path: "Mirrorup", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = (photo.filename as NSString).deletingPathExtension
+        let ext = (photo.filename as NSString).pathExtension
+        var url = folder.appending(path: photo.filename)
+        var index = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appending(path: ext.isEmpty ? "\(name) \(index)" : "\(name) \(index).\(ext)")
+            index += 1
+        }
+        try photo.data.write(to: url, options: .withoutOverwriting)
+        return url
+    }
+
     /// Lens and the exposure triangle, in the order photographers read them.
     private static func summary(_ info: CameraMetadata) -> String? {
         let kinds: [CameraMetadata.ItemKind] = [.lensName, .aperture, .shutterSpeed, .iso]
@@ -305,9 +500,13 @@ final class AppModel {
             UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
         }
         isVirtualCameraAvailable = sinkState == .connected
+        if newPhase != .live { controlState = nil }
         if newPhase == .live && !wasLive {
-            // Once per connection, so the popover summary is ready; never on a timer.
-            Task { await refreshCameraInfo() }
+            // Once per connection, so the popover is ready; never on a timer.
+            Task {
+                await refreshCameraInfo()
+                await refreshControls()
+            }
         }
 
         menuBarIcon = switch newPhase {

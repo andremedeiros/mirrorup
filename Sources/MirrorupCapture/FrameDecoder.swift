@@ -11,6 +11,11 @@ import VideoToolbox
 /// buffers from the session's own pool, which VideoToolbox sizes from the destination attributes.
 /// The session is recreated whenever the JPEG dimensions change.
 ///
+/// A non-normal `FrameOrientation` adds one `VTPixelRotationSession` pass into a second
+/// IOSurface-backed pool of the same format and size. Both are created on the first oriented frame
+/// and released on the first `.normal` frame, so `.normal` costs nothing: the decoder's own buffer is
+/// returned as is.
+///
 /// Not thread-safe and deliberately not `Sendable`: create, use and drop it from a single owner
 /// (one capture loop or one benchmark); never share it between tasks.
 public final class FrameDecoder {
@@ -21,6 +26,10 @@ public final class FrameDecoder {
     private var formatDescription: CMVideoFormatDescription?
     private var sourceSize: (width: Int, height: Int)?
     private let destinationAttributes: CFDictionary
+    private var orienter: FrameOrienter?
+
+    /// Whether the orientation stage (rotation session and its pool) currently exists. For tests.
+    var isOrienting: Bool { orienter != nil }
 
     public init(output: VideoFormat, pixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
         self.output = output
@@ -37,9 +46,11 @@ public final class FrameDecoder {
         invalidate()
     }
 
-    /// Decodes `frame` and stamps it with `sequence`. Throws `.invalidFrame` for anything that does
-    /// not decode; the session stays usable for the next frame.
-    public func decode(_ frame: CameraFrame, sequence: UInt64) throws(CameraError) -> DecodedFrame {
+    /// Decodes `frame`, applies `orientation` and stamps it with `sequence`. Throws `.invalidFrame` for
+    /// anything that does not decode; the session stays usable for the next frame.
+    public func decode(
+        _ frame: CameraFrame, sequence: UInt64, orientation: FrameOrientation = .normal
+    ) throws(CameraError) -> DecodedFrame {
         guard let dimensions = JPEGInfo.dimensions(of: frame.jpeg) else {
             throw CameraError(.invalidFrame, "The camera sent an unreadable frame.", detail: "No JPEG SOF marker in \(frame.jpeg.count) bytes")
         }
@@ -50,7 +61,7 @@ public final class FrameDecoder {
             throw CameraError(.invalidFrame, "The video decoder is unavailable.", detail: "No decompression session")
         }
 
-        let pixelBuffer = try frame.jpeg.withUnsafeBytes { (raw: UnsafeRawBufferPointer) throws(CameraError) -> CVPixelBuffer in
+        let decodedBuffer = try frame.jpeg.withUnsafeBytes { (raw: UnsafeRawBufferPointer) throws(CameraError) -> CVPixelBuffer in
             guard let base = raw.baseAddress, raw.count > 0 else {
                 throw CameraError(.invalidFrame, "The camera sent an empty frame.")
             }
@@ -94,22 +105,44 @@ public final class FrameDecoder {
             return imageBuffer
         }
 
+        let pixelBuffer: CVPixelBuffer
+        if orientation == .normal {
+            orienter = nil
+            pixelBuffer = decodedBuffer
+        } else {
+            let stage: FrameOrienter
+            if let orienter {
+                stage = orienter
+            } else {
+                stage = try FrameOrienter(bufferAttributes: destinationAttributes)
+                orienter = stage
+            }
+            pixelBuffer = try stage.orient(decodedBuffer, to: orientation)
+        }
+
         return DecodedFrame(
             pixelBuffer: pixelBuffer, sequence: sequence, captureHostTime: frame.acquisitionEnd,
             decodedHostTime: HostTime.now(), sourceWidth: dimensions.width, sourceHeight: dimensions.height
         )
     }
 
-    /// Releases the decompression session; the next `decode` creates a new one.
+    /// Releases the decompression session and the orientation stage; the next `decode` recreates
+    /// what it needs.
     public func invalidate() {
+        invalidateSession()
+        orienter = nil
+    }
+
+    private func invalidateSession() {
         if let session { VTDecompressionSessionInvalidate(session) }
         session = nil
         formatDescription = nil
         sourceSize = nil
     }
 
+    /// The orientation stage does not depend on the JPEG size, so it survives a source-size change.
     private func makeSession(width: Int, height: Int) throws(CameraError) {
-        invalidate()
+        invalidateSession()
         var description: CMVideoFormatDescription?
         var status = CMVideoFormatDescriptionCreate(
             allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_JPEG,
@@ -140,8 +173,73 @@ public final class FrameDecoder {
         Diagnostics.capture.info("Decoder configured for \(width)x\(height) JPEG -> \(self.output.width)x\(self.output.height)")
     }
 
-    private static func failure(_ step: String, _ status: OSStatus) -> CameraError {
+    fileprivate static func failure(_ step: String, _ status: OSStatus) -> CameraError {
         CameraError(.invalidFrame, "A frame could not be decoded.", detail: "\(step) failed: OSStatus \(status)")
+    }
+}
+
+/// Mirrors and/or rotates decoded frames by 180° with one `VTPixelRotationSession` pass into buffers
+/// from its own IOSurface-backed pool (same format and size as the decoder output, so consumers
+/// cannot tell the two apart). Owned by one `FrameDecoder`; same threading rules.
+private final class FrameOrienter {
+    private let session: VTPixelRotationSession
+    private let pool: CVPixelBufferPool
+    /// Orientation the session's properties are set for; nil until the first frame.
+    private var configured: FrameOrientation?
+
+    init(bufferAttributes: CFDictionary) throws(CameraError) {
+        var newSession: VTPixelRotationSession?
+        var status = VTPixelRotationSessionCreate(kCFAllocatorDefault, &newSession)
+        guard status == noErr, let newSession else { throw FrameDecoder.failure("VTPixelRotationSessionCreate", status) }
+        var newPool: CVPixelBufferPool?
+        status = CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, bufferAttributes, &newPool)
+        guard status == kCVReturnSuccess, let newPool else {
+            VTPixelRotationSessionInvalidate(newSession)
+            throw FrameDecoder.failure("CVPixelBufferPoolCreate", status)
+        }
+        session = newSession
+        pool = newPool
+        Diagnostics.capture.info("Frame orientation stage created")
+    }
+
+    deinit {
+        VTPixelRotationSessionInvalidate(session)
+        Diagnostics.capture.info("Frame orientation stage released")
+    }
+
+    func orient(_ source: CVPixelBuffer, to orientation: FrameOrientation) throws(CameraError) -> CVPixelBuffer {
+        if configured != orientation {
+            try configure(for: orientation)
+        }
+        var destination: CVPixelBuffer?
+        var status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destination)
+        guard status == kCVReturnSuccess, let destination else {
+            throw FrameDecoder.failure("CVPixelBufferPoolCreatePixelBuffer", status)
+        }
+        let signpost = Diagnostics.signposter.beginInterval("Orient")
+        status = VTPixelRotationSessionRotateImage(session, source, destination)
+        Diagnostics.signposter.endInterval("Orient", signpost)
+        guard status == noErr else { throw FrameDecoder.failure("VTPixelRotationSessionRotateImage", status) }
+        return destination
+    }
+
+    /// Upside down is a 180° rotation; mirrored is a horizontal flip; both together cancel the
+    /// horizontal part of the rotation and leave a vertical flip.
+    private func configure(for orientation: FrameOrientation) throws(CameraError) {
+        configured = nil
+        let rotation = orientation.upsideDown && !orientation.mirrored ? kVTRotation_180 : kVTRotation_0
+        let flipHorizontal = orientation.mirrored && !orientation.upsideDown
+        let flipVertical = orientation.mirrored && orientation.upsideDown
+        let properties: [(CFString, CFTypeRef)] = [
+            (kVTPixelRotationPropertyKey_Rotation, rotation),
+            (kVTPixelRotationPropertyKey_FlipHorizontalOrientation, flipHorizontal ? kCFBooleanTrue : kCFBooleanFalse),
+            (kVTPixelRotationPropertyKey_FlipVerticalOrientation, flipVertical ? kCFBooleanTrue : kCFBooleanFalse),
+        ]
+        for (key, value) in properties {
+            let status = VTSessionSetProperty(session, key: key, value: value)
+            guard status == noErr else { throw FrameDecoder.failure("VTSessionSetProperty(\(key))", status) }
+        }
+        configured = orientation
     }
 }
 

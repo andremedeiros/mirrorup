@@ -19,23 +19,33 @@ public actor CanonCamera: CameraBackend {
         public var commandTimeout: Duration = .seconds(5)
         /// GetViewfinderData parameters (docs/canon-eos-ptp.md §4).
         public var viewfinderParameters: [UInt32] = [0x0020_0000, 0, 0]
+        /// Longest wait for a property write to come back as a PropValueChanged event.
+        public var settingConfirmationTimeout: Duration = .seconds(1)
+        /// Longest wait for live-view frames to show a moved AF point or a new magnification.
+        public var frameConfirmationTimeout: Duration = .seconds(1)
+        /// Longest DoAf hold before AfCancel releases it (the SL2 rejects other writes while AF is held).
+        public var autofocusTimeout: Duration = .seconds(2)
+        /// Longest wait for the shutter to produce a new file on the card.
+        public var photoTimeout: Duration = .seconds(15)
+        /// GetObject budget for a full-resolution file (several to tens of MB over USB 2).
+        public var photoDownloadTimeout: Duration = .seconds(60)
 
         public init() {}
     }
 
-    private enum State {
+    enum State {
         case disconnected
         case connected
         case liveView(savedOutput: UInt32, savedEVFMode: UInt32?)
     }
 
     public nonisolated let session: PTPSession
-    private let options: Options
+    let options: Options
     private var baseIdentity: CameraIdentity
-    private var state = State.disconnected
+    private(set) var state = State.disconnected
     private(set) var deviceInfo: PTPDeviceInfo?
     public private(set) var properties = CanonPropertyCache()
-    private var sequence: UInt64 = 0
+    private(set) var sequence: UInt64 = 0
     private var lastFrameTime = ContinuousClock.now
     private var lastEventPoll = ContinuousClock.now
     private var lastKeepAlive = ContinuousClock.now
@@ -44,7 +54,15 @@ public actor CanonCamera: CameraBackend {
     private var rearmedSinceLastFrame = false
     /// Typed metadata and JPEG of the latest live-view frame. Kept as parsed (no formatting) so the
     /// capture path stays cheap; `metadata()` formats it when someone asks.
-    private var latestFrame: CanonViewfinderFrame?
+    private(set) var latestFrame: CanonViewfinderFrame?
+    /// True while the shutter cycle of `capturePhoto()` runs: the mirror drops and live view pauses, so
+    /// frame polling and the frame timeout are suspended. The timeout restarts when it ends.
+    var shutterCycleActive = false {
+        didSet { lastFrameTime = .now }
+    }
+    /// Objects the camera announced (ObjectAddedEx / RequestObjectTransfer) while a capture collects
+    /// them; nil when nobody is waiting for one, so a user shooting on the body costs nothing.
+    var collectedObjects: [CanonObjectInfo]?
     /// Incremented by stopLiveView/disconnect so a suspended nextFrame notices it was superseded.
     private var epoch: UInt64 = 0
     public private(set) var pollStatistics = PollStatistics()
@@ -296,6 +314,11 @@ public actor CanonCamera: CameraBackend {
             while true {
                 try Task.checkCancellation()
                 guard epoch == myEpoch else { throw CameraError(.cancelled, "Live view was stopped.") }
+                if shutterCycleActive {
+                    // The shutter owns the camera; GetViewfinderData would only answer busy.
+                    try await Task.sleep(for: .milliseconds(20))
+                    continue
+                }
                 try await housekeeping()
 
                 let start = HostTime.now()
@@ -381,7 +404,7 @@ public actor CanonCamera: CameraBackend {
     }
 
     /// GetEvent until the camera reports nothing new (bounded).
-    private func drainEvents() async throws(PTPError) {
+    func drainEvents() async throws(PTPError) {
         for _ in 0..<50 {
             let result = try await session.execute(PTPCommand(CanonOperation.getEvent), timeout: options.commandTimeout)
             let events = try CanonEventParser.parse(result.data)
@@ -393,6 +416,12 @@ public actor CanonCamera: CameraBackend {
                     keepAliveRequested = true
                 case .cameraStatusChanged(let status):
                     Diagnostics.canon.debug("camera status \(status)")
+                case .objectAdded(let object), .objectTransferRequested(let object):
+                    // Bounded: a capture takes the first file; RAW+JPEG adds a second.
+                    if var list = collectedObjects, list.count < 8 {
+                        list.append(object)
+                        collectedObjects = list
+                    }
                 default:
                     break
                 }

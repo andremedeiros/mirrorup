@@ -50,6 +50,26 @@ extension CanonCatalog {
         }
     }
 
+    /// Human title for one value a user may choose (a camera control option), or nil when no reference
+    /// documents the value: undocumented codes are never offered as choices.
+    public static func optionTitle(property code: UInt32, value: UInt32) -> String? {
+        guard let spec = propertySpecs[code] else { return nil }
+        let v = value & spec.width.mask
+        switch spec.format {
+        case .aperture: return CanonValueTables.aperture[v]
+        case .shutterSpeed: return CanonValueTables.shutterSpeed[v]
+        case .iso: return CanonValueTables.iso[v]
+        case .exposureCompensation: return CanonValueTables.exposureCompensation[v]
+        case .exposureBracketStep: return CanonValueTables.exposureBracketStep[v]
+        case .table(let table): return table.entries[v]
+        case .kelvin, .number, .signedNumber, .duration:
+            return format(.integer(value), as: spec.format, width: spec.width)
+        case .identifier, .text, .liveViewOutput, .imageQuality, .localTime, .utcTime, .timeZone, .bracketMode,
+             .temperatureStatus:
+            return nil
+        }
+    }
+
     /// The metadata section a property belongs to; `.other` for undocumented codes.
     public static func section(forProperty code: UInt32) -> CameraMetadata.SectionKind {
         if let spec = propertySpecs[code] { return spec.section }
@@ -545,6 +565,8 @@ enum CanonValueTables {
             0x04: "75%",
             0x05: "25%",
     ]
+    /// The battery level code libgphoto2 names "Low" (the lowest level the property reports).
+    static let batteryLevelLow: UInt32 = 0x00
 
     /// libgphoto2 camera_canon_eos_update_capture_target: 4 is PC RAM (PTP_CANON_EOS_CAPTUREDEST_HD),
     /// 2 is the card value bodies report (gphoto2 issue 383).

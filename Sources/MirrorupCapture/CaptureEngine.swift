@@ -90,4 +90,18 @@ public actor CaptureEngine {
         guard let backend = core.backend else { return nil }
         return await backend.metadata()
     }
+
+    /// The current session's backend if it supports user controls; nil when no camera is connected
+    /// or the backend has no controls.
+    public nonisolated func controls() -> (any CameraControlling)? {
+        core.backend as? any CameraControlling
+    }
+
+    /// Mirrors and/or flips every frame from the next decoded one on, for the preview and the virtual
+    /// camera alike. Safe from any thread; persists across `stop()`/`start()`.
+    public nonisolated func setOrientation(_ orientation: FrameOrientation) {
+        core.orientation = orientation
+    }
+
+    public nonisolated var orientation: FrameOrientation { core.orientation }
 }
