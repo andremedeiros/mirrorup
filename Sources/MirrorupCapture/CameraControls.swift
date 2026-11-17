@@ -4,8 +4,11 @@ public import Foundation
 /// Settings a backend may let the user change. Which ones appear, and with which options, is decided
 /// by the camera and its current mode (e.g. a fully automatic mode offers no aperture choices).
 public enum CameraSetting: String, Sendable, CaseIterable, Codable {
-    case aperture, shutterSpeed, iso, exposureCompensation, whiteBalance, colorTemperature, pictureStyle
-    /// Live-view autofocus method; the "face tracking" toggle selects between its options.
+    case aperture, shutterSpeed, iso, exposureCompensation, whiteBalance, colorTemperature
+    /// The maker's colour/contrast preset: Canon Picture Style, Nikon Picture Control, Sony Creative
+    /// Look, Fujifilm Film Simulation. Backends give it the maker's name (`CameraSettingState.title`).
+    case imageStyle
+    /// How live-view autofocus picks its subject (single point, face tracking, zones…).
     case autofocusMethod
 
     public var title: String {
@@ -16,7 +19,7 @@ public enum CameraSetting: String, Sendable, CaseIterable, Codable {
         case .exposureCompensation: "Brightness"
         case .whiteBalance: "White Balance"
         case .colorTemperature: "Color Temperature"
-        case .pictureStyle: "Picture Style"
+        case .imageStyle: "Image Style"
         case .autofocusMethod: "Focus Mode"
         }
     }
@@ -36,12 +39,15 @@ public struct CameraSettingOption: Sendable, Hashable, Identifiable {
 
 public struct CameraSettingState: Sendable, Equatable {
     public let setting: CameraSetting
+    /// The label in the camera maker's own words ("Picture Style"); defaults to `setting.title`.
+    public let title: String
     public let current: CameraSettingOption?
     /// Values the camera accepts right now, in the camera's order.
     public let options: [CameraSettingOption]
 
-    public init(setting: CameraSetting, current: CameraSettingOption?, options: [CameraSettingOption]) {
+    public init(setting: CameraSetting, title: String? = nil, current: CameraSettingOption?, options: [CameraSettingOption]) {
         self.setting = setting
+        self.title = title ?? setting.title
         self.current = current
         self.options = options
     }
@@ -51,12 +57,19 @@ public struct CameraSettingState: Sendable, Equatable {
 }
 
 /// Live-view magnification. Zoom crops the sensor (sharper than digital zoom) and changes the
-/// stream's field of view.
-public enum CameraZoom: Int, Sendable, CaseIterable, Codable {
-    /// No 10×: the SL2 sends the same image at 10× as at 5× over USB (verified), so it would add nothing.
-    case x1 = 1, x5 = 5
+/// stream's field of view. Which factors exist is up to the camera (`CameraControlState.zoomLevels`).
+public struct CameraZoom: Sendable, Hashable, Codable, Comparable, CustomStringConvertible {
+    public let factor: Int
 
-    public var title: String { "\(rawValue)×" }
+    public init(_ factor: Int) {
+        self.factor = factor
+    }
+
+    public static let x1 = CameraZoom(1)
+
+    public var title: String { "\(factor)×" }
+    public var description: String { title }
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.factor < rhs.factor }
 }
 
 /// How an autofocus attempt ended, as reported by the camera's live-view AF frame.
@@ -73,12 +86,17 @@ public struct CameraControlState: Sendable, Equatable {
     public var settings: [CameraSetting: CameraSettingState]
     public var canAutofocus: Bool
     public var canFocusAtPoint: Bool
-    /// Current magnification, or nil when the camera cannot zoom live view.
+    /// Current magnification, or nil when the camera cannot zoom live view right now.
     public var zoom: CameraZoom?
+    /// Magnifications the camera offers, ascending, starting at 1×; empty when it can't zoom.
+    public var zoomLevels: [CameraZoom]
     public var canCapturePhoto: Bool
-    /// Why `canCapturePhoto` is false when the camera itself is the reason (e.g. its power switch is on
-    /// movie mode), as a user-facing sentence; nil otherwise.
+    /// Why `canCapturePhoto` is false when the camera itself is the reason (e.g. it is set to movie
+    /// mode), as a user-facing sentence in the camera's own terms; nil otherwise.
     public var photoUnavailableReason: String?
+    /// One user-facing sentence on what to change on the camera to unlock more controls (e.g. "Set
+    /// the mode dial to P, Av, Tv or M…"), in the camera's own terms; nil when nothing is locked.
+    public var hint: String?
     /// Human battery level ("Full", "50%"), nil when unknown.
     public var battery: String?
     public var batteryIsLow: Bool
@@ -86,15 +104,18 @@ public struct CameraControlState: Sendable, Equatable {
 
     public init(
         settings: [CameraSetting: CameraSettingState] = [:], canAutofocus: Bool = false, canFocusAtPoint: Bool = false,
-        zoom: CameraZoom? = nil, canCapturePhoto: Bool = false, photoUnavailableReason: String? = nil,
+        zoom: CameraZoom? = nil, zoomLevels: [CameraZoom] = [], canCapturePhoto: Bool = false,
+        photoUnavailableReason: String? = nil, hint: String? = nil,
         battery: String? = nil, batteryIsLow: Bool = false, shotsRemaining: Int? = nil
     ) {
         self.settings = settings
         self.canAutofocus = canAutofocus
         self.canFocusAtPoint = canFocusAtPoint
         self.zoom = zoom
+        self.zoomLevels = zoomLevels
         self.canCapturePhoto = canCapturePhoto
         self.photoUnavailableReason = photoUnavailableReason
+        self.hint = hint
         self.battery = battery
         self.batteryIsLow = batteryIsLow
         self.shotsRemaining = shotsRemaining

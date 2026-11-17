@@ -49,11 +49,9 @@ public struct USBDeviceSnapshot: Sendable {
 }
 
 public enum USBDiscovery {
-    public static let canonVendorID: UInt16 = 0x04A9
-
-    /// Enumerates attached devices, optionally filtered by vendor. Reading descriptors opens each
+    /// Enumerates attached devices, optionally filtered by USB vendor ID. Reading descriptors opens each
     /// device's user client briefly; failures are recorded per device, never swallowed.
-    public static func devices(vendorID: UInt16? = canonVendorID, readDescriptors: Bool = true) -> [USBDeviceSnapshot] {
+    public static func devices(vendorID: UInt16? = nil, readDescriptors: Bool = true) -> [USBDeviceSnapshot] {
         var match: [String: Any] = [kIOProviderClassKey: "IOUSBHostDevice"]
         if let vendorID { match[kIOPropertyMatchKey] = ["idVendor": Int(vendorID)] }
         var iterator: io_iterator_t = 0
@@ -114,16 +112,26 @@ public enum USBDiscovery {
         return try USBDescriptorParser.parseConfiguration(bytes)
     }
 
+    /// The device's own interfaces. Interfaces may sit below intermediate nubs, so the walk descends,
+    /// but it never enters a nested device: a hub's subtree holds the devices plugged into it, whose
+    /// interfaces are theirs, not the hub's.
     static func interfaces(of device: io_service_t) -> [USBDeviceSnapshot.RegistryInterface] {
-        var iterator: io_iterator_t = 0
-        guard IORegistryEntryCreateIterator(device, kIOServicePlane, IOOptionBits(kIORegistryIterateRecursively), &iterator) == KERN_SUCCESS else {
-            return []
-        }
-        defer { IOObjectRelease(iterator) }
         var result: [USBDeviceSnapshot.RegistryInterface] = []
+        collectInterfaces(below: device, into: &result)
+        return result
+    }
+
+    private static func collectInterfaces(below parent: io_registry_entry_t, into result: inout [USBDeviceSnapshot.RegistryInterface]) {
+        var iterator: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(parent, kIOServicePlane, &iterator) == KERN_SUCCESS else { return }
+        defer { IOObjectRelease(iterator) }
         while case let entry = IOIteratorNext(iterator), entry != 0 {
             defer { IOObjectRelease(entry) }
-            guard IOObjectConformsTo(entry, "IOUSBHostInterface") != 0 else { continue }
+            if IOObjectConformsTo(entry, "IOUSBHostDevice") != 0 { continue }
+            guard IOObjectConformsTo(entry, "IOUSBHostInterface") != 0 else {
+                collectInterfaces(below: entry, into: &result)
+                continue
+            }
             result.append(.init(
                 registryID: registryID(entry),
                 number: UInt8(truncatingIfNeeded: intProperty(entry, "bInterfaceNumber") ?? 0),
@@ -133,7 +141,6 @@ public enum USBDiscovery {
                 exclusiveOwner: stringProperty(entry, "UsbExclusiveOwner")
             ))
         }
-        return result
     }
 
     /// Looks up a registry entry by ID; caller releases.

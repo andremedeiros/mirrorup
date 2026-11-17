@@ -144,3 +144,23 @@ public struct DecodedFrame: @unchecked Sendable {
         self.sourceHeight = sourceHeight
     }
 }
+
+/// How a polling backend's live-view requests went: for benchmarks and diagnostics.
+public struct LiveViewPollStatistics: Sendable, Equatable {
+    /// Live-view requests sent.
+    public var requests = 0
+    /// Requests that returned a frame.
+    public var frames = 0
+    /// Requests the camera answered with "not ready yet".
+    public var notReady = 0
+    /// Responses that could not be parsed into a frame.
+    public var invalidPayloads = 0
+    public var payloadBytes = 0
+
+    public init() {}
+}
+
+/// Optional capability of a `CameraBackend` that polls the camera for each frame (PTP live view).
+public protocol LiveViewPolling: Sendable {
+    var pollStatistics: LiveViewPollStatistics { get async }
+}

@@ -190,7 +190,7 @@ extension CanonCatalog {
         0xD10D: PropertySpec("White Balance XA", .whiteBalance, .number),
         0xD10E: PropertySpec("White Balance XB", .whiteBalance, .number),
         0xD10F: PropertySpec("Color Space", .image, .table(.colorSpace), width: .u16, kind: .colorSpace),
-        0xD110: PropertySpec("Picture Style", .image, .table(.pictureStyle), width: .u8, kind: .pictureStyle),
+        0xD110: PropertySpec("Picture Style", .image, .table(.pictureStyle), width: .u8, kind: .imageStyle),
         0xD111: PropertySpec("Battery Level", .power, .table(.batteryLevel), width: .u16, kind: .batteryLevel),
         0xD112: PropertySpec("Battery Select", .power, .number),
         0xD113: PropertySpec("Camera Time", .device, .localTime, kind: .dateTime),

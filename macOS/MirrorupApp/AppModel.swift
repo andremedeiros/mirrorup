@@ -136,7 +136,7 @@ final class AppModel {
     init() {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Keys.autoStart: true])
-        let source = defaults.string(forKey: Keys.source).flatMap(CameraSource.init(rawValue:)) ?? .canon
+        let source = defaults.string(forKey: Keys.source).flatMap(CameraSource.init(storedValue:)) ?? .camera
         self.source = source
         autoStartStreaming = defaults.bool(forKey: Keys.autoStart)
         mirrored = defaults.bool(forKey: Keys.mirrored)
@@ -446,7 +446,8 @@ final class AppModel {
 
     /// The popover's subtitle: shooting mode and lens ("P · EF-S18-55mm f/4-5.6 IS STM").
     private static func summary(_ info: CameraMetadata) -> String? {
-        // Shooting mode as on the dial ("P", from "P (Program AE)"), then the lens, which may truncate.
+        // Shooting mode as on the dial, then the lens, which may truncate. Drivers write explained
+        // values as "P (Program AE)"; the part before the parenthesis is what the dial says.
         // Exposure values read "Auto" outside an exposure and say nothing.
         let mode = info.item(.exposureMode)?.value.split(separator: " (").first.map(String.init)
         let parts = [mode, info.item(.lensName)?.value].compactMap { $0 }.filter { !$0.isEmpty }
@@ -486,7 +487,7 @@ final class AppModel {
     /// What to call a camera source in the UI.
     func title(for source: CameraSource) -> String {
         switch source {
-        case .canon: lastCameraName ?? "Canon EOS Camera"
+        case .camera: lastCameraName ?? "USB Camera"
         case .testPattern: "Test Pattern"
         }
     }
@@ -502,9 +503,9 @@ final class AppModel {
             case .streaming:
                 newPhase = .live
             case .failed(let error):
-                newPhase = .unavailable(message: UserFacingText.message(for: error))
+                newPhase = .unavailable(message: error.message)
             case .recovering:
-                newPhase = .reconnecting(reason: status.lastRecoverableError.map(UserFacingText.message(for:)))
+                newPhase = .reconnecting(reason: status.lastRecoverableError?.message)
             case .idle, .discovering, .connecting, .initializing, .ready:
                 // Stay "reconnecting" through the intermediate states of a recovery so the UI
                 // doesn't flicker; a fresh start shows "connecting".
@@ -514,7 +515,7 @@ final class AppModel {
         let wasLive = phase == .live
         phase = newPhase
         cameraName = status.camera?.name
-        if source == .canon, let name = cameraName, name != lastCameraName {
+        if source == .camera, let name = cameraName, name != lastCameraName {
             lastCameraName = name
             UserDefaults.standard.set(name, forKey: Keys.lastCameraName)
         }

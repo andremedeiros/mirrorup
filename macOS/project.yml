@@ -45,7 +45,9 @@ targets:
       - package: Mirrorup
         product: MirrorupCapture
       - package: Mirrorup
-        product: MirrorupCanon
+        product: MirrorupDevices
+      - package: Mirrorup
+        product: MirrorupCameras
       - package: Mirrorup
         product: MirrorupDiagnostics
     settings:
@@ -63,8 +65,8 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         # Menu-bar app: no Dock icon.
         LSUIElement: true
-        NSCameraUsageDescription: Mirrorup needs camera access to connect to your Canon camera and publish its picture as the Mirrorup Camera.
-        NSHumanReadableCopyright: Mirrorup is not affiliated with Canon Inc.
+        NSCameraUsageDescription: Mirrorup needs camera access to connect to your camera and publish its picture as the Mirrorup Camera.
+        NSHumanReadableCopyright: Mirrorup is not affiliated with any camera manufacturer.
         # Read by ExtensionManager so the identifier is defined once, here.
         MirrorupCameraExtensionBundleIdentifier: $(EXTENSION_BUNDLE_ID)
     entitlements:
@@ -99,7 +101,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSSystemExtensionUsageDescription: Publishes your Canon camera as the Mirrorup Camera for FaceTime, Zoom, browsers and other video apps.
+        NSSystemExtensionUsageDescription: Publishes your camera as the Mirrorup Camera for FaceTime, Zoom, browsers and other video apps.
         CMIOExtension:
           # The sandbox only lets the extension register Mach services under one of its app groups.
           CMIOExtensionMachServiceName: $(TeamIdentifierPrefix)$(EXTENSION_BUNDLE_ID)

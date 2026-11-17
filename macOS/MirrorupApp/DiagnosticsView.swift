@@ -25,7 +25,7 @@ struct DiagnosticsView: View {
                 MetricRow(title: "Invalid frames", value: "\(metrics.invalidFrames)")
                 MetricRow(title: "Reconnects", value: "\(status.reconnectCount)")
                 if let error = status.lastRecoverableError {
-                    MetricRow(title: "Last recoverable error", value: UserFacingText.message(for: error))
+                    MetricRow(title: "Last recoverable error", value: error.message)
                     MetricRow(title: "Error detail", value: error.detail ?? "—")
                 }
             }

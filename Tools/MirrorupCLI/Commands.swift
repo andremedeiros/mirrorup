@@ -1,7 +1,8 @@
 import Foundation
 import ImageIO
-import MirrorupCanon
+import MirrorupCameras
 import MirrorupCapture
+import MirrorupDevices
 import MirrorupImageCapture
 import MirrorupPTP
 import MirrorupUSB
@@ -10,8 +11,18 @@ enum Commands {
     static func hex16(_ v: UInt16) -> String { String(format: "0x%04X", v) }
 
     static func devices() async {
-        let usb = USBDiscovery.devices(vendorID: USBDiscovery.canonVendorID, readDescriptors: false)
-        print("USB devices (vendor 0x04A9):")
+        let registry = CameraRegistry.builtIn
+        func show(_ cameras: [DiscoveredCamera]) {
+            if cameras.isEmpty { print("  none") }
+            for camera in cameras {
+                let driver = registry.driver(for: camera).map { "driver \($0.id)" }
+                    ?? (camera.acceptsPTP ? "not supported yet" : "no PTP interface")
+                print("  \(camera.name)  usb \(String(format: "%04X:%04X", camera.usbVendorID, camera.usbProductID))  \(camera.vendorName ?? "unknown vendor")  \(driver)")
+            }
+        }
+        print("USB cameras (PTP devices and known camera makers):")
+        let usb = USBDiscovery.devices(vendorID: nil, readDescriptors: false)
+            .filter { $0.stillImageRegistryInterface != nil || CameraVendor(usbVendorID: $0.vendorID) != nil }
         if usb.isEmpty { print("  none") }
         for d in usb {
             print("  \(d.product ?? "?") — \(d.manufacturer ?? "?")")
@@ -22,21 +33,16 @@ enum Commands {
                 print("    no PTP (Still Image) interface")
             }
         }
-        await MainActor.run { ImageCaptureBrowser.shared.start() }
-        // ImageCaptureCore enumerates asynchronously; give it a moment to report attached cameras.
-        try? await Task.sleep(for: .seconds(2))
-        let summaries = await MainActor.run { ImageCaptureBrowser.shared.summaries }
         print("Image Capture cameras:")
-        if summaries.isEmpty { print("  none") }
-        for c in summaries {
-            print("  \(c.name)  usb \(String(format: "%04X:%04X", c.usbVendorID, c.usbProductID))  transport \(c.transport ?? "?")  PTP pass-through: \(c.acceptsPTPCommands ? "yes" : "no")")
-        }
+        show(await CameraDiscovery.cameras(on: .imageCapture))
+        print("Drivers: \(registry.drivers.map { "\($0.name) (\($0.id))" }.joined(separator: ", "))")
     }
 
     static func inspect() {
-        let devices = USBDiscovery.devices(vendorID: USBDiscovery.canonVendorID, readDescriptors: true)
+        let devices = USBDiscovery.devices(vendorID: nil, readDescriptors: true)
+            .filter { $0.stillImageRegistryInterface != nil || CameraVendor(usbVendorID: $0.vendorID) != nil }
         if devices.isEmpty {
-            print("No Canon USB devices attached.")
+            print("No USB cameras attached.")
             return
         }
         for d in devices {
@@ -79,13 +85,20 @@ enum Commands {
         }
     }
 
-    static func openCamera(_ transport: CanonBackendFactory.Transport) async throws -> CanonCamera {
-        try await CanonBackendFactory.makeCamera(transport: transport)
+    /// The first attached camera a built-in driver supports.
+    static func findCamera(_ transport: CameraTransport) async throws -> (camera: DiscoveredCamera, driver: any CameraDriver) {
+        if let found = await CameraRegistry.builtIn.firstSupportedCamera(on: transport) { return found }
+        throw await CameraRegistry.builtIn.notFoundError(on: transport)
     }
 
-    static func ptpInfo(transport: CanonBackendFactory.Transport) async throws {
-        let camera = try await openCamera(transport)
-        let session = camera.session
+    static func openCamera(_ transport: CameraTransport) async throws -> any CameraBackend {
+        let (camera, driver) = try await findCamera(transport)
+        return try await driver.makeBackend(for: camera)
+    }
+
+    /// GetDeviceInfo over a bare PTP session: works for any PTP camera a driver claims.
+    static func deviceInfo(_ camera: DiscoveredCamera) async throws -> PTPDeviceInfo {
+        let session = try await camera.openPTPSession()
         try await session.open()
         let info: PTPDeviceInfo
         do {
@@ -95,54 +108,52 @@ enum Commands {
             throw error
         }
         await session.close()
+        return info
+    }
+
+    static func ptpInfo(transport: CameraTransport) async throws {
+        let (camera, driver) = try await findCamera(transport)
+        let info = try await deviceInfo(camera)
         print("Manufacturer        \(info.manufacturer)")
         print("Model               \(info.model)")
         print("Device version      \(info.deviceVersion)")
         print("Serial number       \(info.serialNumber.isEmpty ? "(empty)" : info.serialNumber)")
         print("PTP version         \(Double(info.standardVersion) / 100)")
-        let vendor = info.vendorExtensionID == PTPDeviceInfo.vendorExtensionCanon ? "Canon"
-            : info.vendorExtensionID == PTPDeviceInfo.vendorExtensionMicrosoft ? "Microsoft (MTP)" : "unknown"
+        let vendor = info.vendorExtensionName ?? "unknown"
         print("Vendor extension    \(vendor) (0x\(String(info.vendorExtensionID, radix: 16))) v\(info.vendorExtensionVersion) \"\(info.vendorExtensionDescription)\"")
         print("Functional mode     \(info.functionalMode)")
         print("Operations          \(info.operationsSupported.count)")
         print("Events              \(info.eventsSupported.count)")
         print("Device properties   \(info.devicePropertiesSupported.count)")
         func formats(_ codes: [UInt16]) -> String {
-            codes.map { CanonCatalog.objectFormatName($0) ?? hex16($0) }.joined(separator: ", ")
+            codes.map { driver.ptpNames.objectFormat($0) ?? hex16($0) }.joined(separator: ", ")
         }
         print("Capture formats     \(formats(info.captureFormats))")
         print("Image formats       \(formats(info.imageFormats))")
-        print("Live view support   \(info.supports(CanonOperation.getViewfinderData) ? "yes (GetViewFinderData)" : "no")")
-        print("Transport           \(await camera.identity.transport)")
+        print("Live view support   \(driver.liveViewSupport(info) ?? "unknown")")
+        print("Driver              \(driver.name) (\(driver.id))")
+        print("Transport           \(camera.transport)")
     }
 
-    static func ptpOperations(transport: CanonBackendFactory.Transport) async throws {
-        let camera = try await openCamera(transport)
-        let session = camera.session
-        try await session.open()
-        let info: PTPDeviceInfo
-        do {
-            info = try await session.deviceInfo()
-        } catch {
-            await session.close()
-            throw error
-        }
-        await session.close()
+    static func ptpOperations(transport: CameraTransport) async throws {
+        let (camera, driver) = try await findCamera(transport)
+        let info = try await deviceInfo(camera)
+        let names = driver.ptpNames
         func show(_ title: String, _ codes: [UInt16], name: (UInt16) -> String?) {
             print("\(title) (\(codes.count)):")
             for code in codes.sorted() { print("  \(hex16(code))  \(name(code) ?? "undocumented")") }
         }
         print(info.model)
-        show("Operations", info.operationsSupported, name: CanonCatalog.operationName)
-        show("Events", info.eventsSupported) { CanonCatalog.eventName(UInt32($0)) }
-        show("Device properties", info.devicePropertiesSupported, name: PTPCatalog.propertyName)
-        show("Capture formats", info.captureFormats, name: CanonCatalog.objectFormatName)
-        show("Image formats", info.imageFormats, name: CanonCatalog.objectFormatName)
+        show("Operations", info.operationsSupported, name: names.operation)
+        show("Events", info.eventsSupported, name: names.event)
+        show("Device properties", info.devicePropertiesSupported, name: names.property)
+        show("Capture formats", info.captureFormats, name: names.objectFormat)
+        show("Image formats", info.imageFormats, name: names.objectFormat)
     }
 
     /// Connects (remote mode + event drain, which reports every property), prints the decoded
     /// metadata grouped by section, and leaves the camera in local mode again.
-    static func cameraInfo(jsonPath: String?, transport: CanonBackendFactory.Transport) async throws {
+    static func cameraInfo(jsonPath: String?, transport: CameraTransport) async throws {
         let camera = try await openCamera(transport)
         let metadata: CameraMetadata
         do {
@@ -184,7 +195,7 @@ enum Commands {
         try encoder.encode(value).write(to: URL(fileURLWithPath: path))
     }
 
-    static func snapshot(output: String, transport: CanonBackendFactory.Transport) async throws {
+    static func snapshot(output: String, transport: CameraTransport) async throws {
         let camera = try await openCamera(transport)
         do {
             try await camera.connect()

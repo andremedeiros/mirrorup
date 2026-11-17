@@ -96,7 +96,8 @@ import Testing
     @Test func deviceInfoFromRealSL2() throws {
         let info = try PTPDeviceInfo(decoding: Bytes.fixture("deviceinfo-sl2.bin"))
         #expect(info.standardVersion == 100)
-        #expect(info.vendorExtensionID == PTPDeviceInfo.vendorExtensionMicrosoft)
+        #expect(info.vendorExtensionID == 0x06)
+        #expect(info.vendorExtensionName == "Microsoft (MTP)")
         #expect(info.manufacturer == "Canon.Inc")
         #expect(info.model == "Canon EOS Rebel SL2")
         #expect(info.operationsSupported.count == 170)

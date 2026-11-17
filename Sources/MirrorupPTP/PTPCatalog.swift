@@ -10,6 +10,29 @@
 ///
 /// Operation, response and event names are the protocol identifiers ("GetDeviceInfo"); device
 /// property and object format names are written for people ("Battery Level", "EXIF/JPEG").
+/// Name lookups for one camera family's PTP codes: the standard tables with a vendor's layered on top.
+/// Drivers supply theirs (`CameraDriver.ptpNames`); `.standard` knows ISO 15740/MTP only.
+public struct PTPCodeNames: Sendable {
+    public var operation: @Sendable (UInt16) -> String?
+    public var event: @Sendable (UInt16) -> String?
+    public var property: @Sendable (UInt16) -> String?
+    public var objectFormat: @Sendable (UInt16) -> String?
+
+    public init(
+        operation: @escaping @Sendable (UInt16) -> String?, event: @escaping @Sendable (UInt16) -> String?,
+        property: @escaping @Sendable (UInt16) -> String?, objectFormat: @escaping @Sendable (UInt16) -> String?
+    ) {
+        self.operation = operation
+        self.event = event
+        self.property = property
+        self.objectFormat = objectFormat
+    }
+
+    public static let standard = PTPCodeNames(
+        operation: PTPCatalog.operationName, event: PTPCatalog.eventName,
+        property: PTPCatalog.propertyName, objectFormat: PTPCatalog.objectFormatName)
+}
+
 public enum PTPCatalog {
     public static func operationName(_ code: UInt16) -> String? { operations[code] }
     public static func responseName(_ code: UInt16) -> String? { responses[code] }

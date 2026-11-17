@@ -39,7 +39,7 @@ extension CanonProperty {
         case .exposureCompensation: exposureCompensation
         case .whiteBalance: whiteBalance
         case .colorTemperature: colorTemperature
-        case .pictureStyle: pictureStyle
+        case .imageStyle: pictureStyle
         case .autofocusMethod: liveViewAFMethod
         }
     }
@@ -118,20 +118,40 @@ extension CanonCamera: CameraControlling {
         if isLiveView, supports(CanonOperation.zoom),
            propertyValue(CanonProperty.liveViewAFMethod) != CanonProperty.afMethodFaceTracking {
             // 10× set on the camera body streams the same image as 5×.
-            zoom = latestFrame?.metadata.magnification.map { CameraZoom(rawValue: Int($0)) ?? .x5 } ?? .x1
+            zoom = latestFrame?.metadata.magnification.map { $0 <= 1 ? .x1 : Self.zoom5 } ?? .x1
         }
         let reason = photoUnavailableReason(shots: shots)
+        let focusAtPoint = canFocusAtPoint
         return CameraControlState(
             settings: settings,
             canAutofocus: canAutofocus,
-            canFocusAtPoint: canFocusAtPoint,
+            canFocusAtPoint: focusAtPoint,
             zoom: zoom,
+            zoomLevels: zoom == nil ? [] : Self.zoomLevels,
             canCapturePhoto: isConnected && supports(CanonOperation.remoteReleaseOn) && supports(CanonOperation.remoteReleaseOff)
                 && reason == nil,
             photoUnavailableReason: reason,
+            hint: Self.hint(settings: settings, canAutofocus: canAutofocus, canFocusAtPoint: focusAtPoint),
             battery: battery.flatMap { CanonCatalog.optionTitle(property: CanonProperty.batteryPower, value: $0) },
             batteryIsLow: battery == CanonValueTables.batteryLevelLow,
             shotsRemaining: shots.map(Int.init))
+    }
+
+    /// Live-view magnifications: 1× and 5×. No 10×: the SL2 sends the same image at 10× as at 5× over
+    /// USB (verified), so it would add nothing.
+    static let zoom5 = CameraZoom(5)
+    static let zoomLevels = [CameraZoom.x1, zoom5]
+
+    /// What to change on the camera to unlock more: exposure controls need a creative-zone mode;
+    /// click-to-focus and zoom need 1-point AF.
+    static func hint(settings: [CameraSetting: CameraSettingState], canAutofocus: Bool, canFocusAtPoint: Bool) -> String? {
+        if settings[.exposureCompensation]?.isAdjustable != true {
+            return "Set the camera's mode dial to P, Av, Tv or M for exposure and color controls."
+        }
+        if settings[.autofocusMethod]?.isAdjustable == true, canAutofocus, !canFocusAtPoint {
+            return "Choose 1-point AF in Focus Mode to focus by clicking the preview, and to zoom."
+        }
+        return nil
     }
 
     /// True while the body reports movie mode (0xD1C2 = 1): the power switch is on the movie position.
@@ -165,7 +185,8 @@ extension CanonCamera: CameraControlling {
             options.first { $0.value & mask == value }
                 ?? CanonCatalog.optionTitle(property: code, value: value).map { CameraSettingOption(value: value, title: $0) }
         }
-        return CameraSettingState(setting: setting, current: currentOption, options: options)
+        return CameraSettingState(setting: setting, title: setting == .imageStyle ? "Picture Style" : nil,
+                                  current: currentOption, options: options)
     }
 
     // MARK: Settings
@@ -328,6 +349,11 @@ extension CanonCamera: CameraControlling {
             throw CameraError(.protocolViolation, "Zoom isn't available in the Face + Tracking focus mode.",
                               detail: "the SL2 answers Zoom with DeviceBusy while LvAfSystem = Face + Tracking")
         }
+        guard Self.zoomLevels.contains(zoom) else {
+            throw CameraError(.protocolViolation, "The camera can't zoom to \(zoom.title).",
+                              detail: "offered: \(Self.zoomLevels.map(\.title).joined(separator: ", "))")
+        }
+        let factor = UInt32(zoom.factor)
         do {
             // Position first (it moves the magnifier the zoom opens on, at the current magnifier size),
             // then magnify; the magnified view is centred on the magnifier.
@@ -337,15 +363,15 @@ extension CanonCamera: CameraControlling {
                 try await moveMagnifier(to: origin, from: metadata.magnifierRect, action: .zoom)
             }
             // The live-view JPEG changes size with the magnification (960×640 → 1200×800 on the SL2).
-            let changed = try await sendConfirmed(PTPCommand(CanonOperation.zoom, [UInt32(zoom.rawValue)]), action: .zoom,
-                                                  context: "Zoom \(zoom.rawValue)") { $0.magnification == UInt32(zoom.rawValue) }
+            let changed = try await sendConfirmed(PTPCommand(CanonOperation.zoom, [factor]), action: .zoom,
+                                                  context: "Zoom \(factor)") { $0.magnification == factor }
             if !changed, isLiveView {
                 throw CameraError(.protocolViolation, "The camera did not change the zoom. Try again in a moment.",
-                                  detail: "Zoom \(zoom.rawValue) answered OK twice but frames kept magnification \(latestFrame?.metadata.magnification.map(String.init) ?? "unknown")")
+                                  detail: "Zoom \(factor) answered OK twice but frames kept magnification \(latestFrame?.metadata.magnification.map(String.init) ?? "unknown")")
             }
             try await drainEvents()
         } catch {
-            throw Self.controlError(error, context: "zoom \(zoom.rawValue)x")
+            throw Self.controlError(error, context: "zoom \(zoom.title)")
         }
         return currentControlState()
     }

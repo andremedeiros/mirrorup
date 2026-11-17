@@ -1,6 +1,6 @@
 import CoreVideo
 import Foundation
-import MirrorupCanon
+import MirrorupDevices
 import MirrorupCapture
 import MirrorupDiagnostics
 
@@ -42,11 +42,11 @@ enum Benchmark {
     }
 
     static func run(duration: Duration, decode: Bool, enhance: Bool, jsonPath: String?,
-                    transport: CanonBackendFactory.Transport) async throws {
+                    transport: CameraTransport) async throws {
         if enhance && !FrameDecoder.isEnhanceSupported {
             throw CLIError("--enhance needs Apple silicon with macOS 26's super-resolution scaler")
         }
-        let camera = try await CanonBackendFactory.makeCamera(transport: transport)
+        let camera = try await Commands.openCamera(transport)
         let capacity = 1 << 16  // enough to keep every sample of a 30-minute run at 30 fps
         var acquisition = SampleWindow(capacity: capacity)
         var interFrame = SampleWindow(capacity: capacity)
@@ -114,7 +114,7 @@ enum Benchmark {
             let elapsed = (ContinuousClock.now - streamStart).milliseconds / 1000
             let resourcesEnd = ProcessResources.snapshot()
             if let r = resourcesEnd { peakFootprint = max(peakFootprint, r.physicalFootprint) }
-            let stats = await camera.pollStatistics
+            let stats = await (camera as? any LiveViewPolling)?.pollStatistics ?? LiveViewPollStatistics()
             try await camera.stopLiveView()
             await camera.disconnect()
 

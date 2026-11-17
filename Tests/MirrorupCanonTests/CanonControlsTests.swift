@@ -82,13 +82,15 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         let state = await camera.controlState()
 
         // Scene Intelligent Auto: the body sends empty lists for exposure, WB and picture style.
-        for setting: CameraSetting in [.aperture, .shutterSpeed, .iso, .exposureCompensation, .whiteBalance, .pictureStyle] {
+        for setting: CameraSetting in [.aperture, .shutterSpeed, .iso, .exposureCompensation, .whiteBalance, .imageStyle] {
             let s = try #require(state.settings[setting], "\(setting)")
             #expect(!s.isAdjustable, "\(setting)")
             #expect(state.adjustable(setting) == nil)
         }
         #expect(state.settings[.aperture]?.current?.title == "Auto")
-        #expect(state.settings[.pictureStyle]?.current?.title == "Auto")
+        #expect(state.settings[.imageStyle]?.current?.title == "Auto")
+        #expect(state.settings[.imageStyle]?.title == "Picture Style")  // Canon's name for the setting
+        #expect(state.hint == "Set the camera's mode dial to P, Av, Tv or M for exposure and color controls.")
         // A Kelvin list arrives, but white balance is Auto, so color temperature is not a choice.
         let kelvin = try #require(state.settings[.colorTemperature])
         #expect(!kelvin.isAdjustable)
@@ -107,6 +109,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         // Not streaming: no AF, no zoom.
         #expect(!state.canAutofocus && !state.canFocusAtPoint)
         #expect(state.zoom == nil)
+        #expect(state.zoomLevels.isEmpty)
     }
 
     @Test func streamingInFaceTrackingCanFocusButNotZoomOrPoint() async throws {
@@ -132,7 +135,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         let (camera, sim) = try makeControlledCamera()
         try await camera.connect()
         let writesBefore = sim.state.withLock { $0.propertyWrites.count }
-        await #expect(throws: CameraError.self) { try await camera.set(.pictureStyle, to: 0x81) }
+        await #expect(throws: CameraError.self) { try await camera.set(.imageStyle, to: 0x81) }
         await #expect(throws: CameraError.self) { try await camera.set(.autofocusMethod, to: 0) }
         #expect(sim.state.withLock { $0.propertyWrites.count } == writesBefore)
     }
@@ -206,7 +209,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
     @Test func zoomPositionsThenMagnifies() async throws {
         let (camera, sim) = try await streaming()
         _ = try await camera.set(.autofocusMethod, to: 1)
-        _ = try await camera.setZoom(.x5, center: CGPoint(x: 0.25, y: 0.5))
+        _ = try await camera.setZoom(CameraZoom(5), center: CGPoint(x: 0.25, y: 0.5))
         let commands = sim.state.withLock { $0.commands }.filter { $0.0 == 0x9159 || $0.0 == 0x9158 }
         // Nothing streams here, so no frame contradicts the camera's OK: each command is sent once.
         #expect(commands.map(\.0) == [0x9159, 0x9158])
@@ -221,7 +224,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         let frames = Task { while !Task.isCancelled { _ = try? await camera.nextFrame(); try? await Task.sleep(for: .milliseconds(5)) } }
         defer { frames.cancel() }
         do {
-            _ = try await camera.setZoom(.x5, center: nil)
+            _ = try await camera.setZoom(CameraZoom(5), center: nil)
             Issue.record("expected an error")
         } catch {
             #expect(error.message == "The camera did not change the zoom. Try again in a moment.")
@@ -229,9 +232,23 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         #expect(sim.state.withLock { $0.log.filter { $0 == 0x9158 }.count } == 2)
     }
 
+    @Test func onePointAFOffersOneAndFiveTimesZoomAndRefusesOthersWithoutSending() async throws {
+        let (camera, sim) = try await streaming()
+        let state = try await camera.set(.autofocusMethod, to: 1)
+        #expect(state.zoomLevels == [.x1, CameraZoom(5)])
+        #expect(state.zoom == .x1)
+        do {
+            _ = try await camera.setZoom(CameraZoom(10), center: nil)
+            Issue.record("expected an error")
+        } catch {
+            #expect(error.message == "The camera can't zoom to 10×.")
+        }
+        #expect(!sim.state.withLock { $0.log.contains(0x9158) })
+    }
+
     @Test func zoomIsRefusedInFaceTrackingWithoutSending() async throws {
         let (camera, sim) = try await streaming()
-        await #expect(throws: CameraError.self) { _ = try await camera.setZoom(.x5, center: nil) }
+        await #expect(throws: CameraError.self) { _ = try await camera.setZoom(CameraZoom(5), center: nil) }
         #expect(!sim.state.withLock { $0.log.contains(0x9158) })
     }
 

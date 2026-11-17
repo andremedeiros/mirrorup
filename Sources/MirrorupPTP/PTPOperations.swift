@@ -82,10 +82,27 @@ public struct PTPDeviceInfo: Sendable, Equatable {
         self.serialNumber = serialNumber
     }
 
-    /// Vendor extension IDs assigned by the PTP standard / PIMA registry.
-    public static let vendorExtensionCanon: UInt32 = 0x0000_000B
-    /// Many Canon bodies report the Microsoft (MTP) extension ID instead of Canon's own.
-    public static let vendorExtensionMicrosoft: UInt32 = 0x0000_0006
+    /// Who defined the vendor extension the device reports, from the PIMA/I3A registry as listed in
+    /// libgphoto2 `ptp.h` (`PTP_VENDOR_*`). Many cameras report Microsoft (MTP) instead of their own
+    /// maker's ID, so this names the extension, not the manufacturer.
+    public var vendorExtensionName: String? {
+        switch vendorExtensionID {
+        case 0x01: "Eastman Kodak"
+        case 0x02: "Seiko Epson"
+        case 0x03: "Agilent"
+        case 0x04: "Polaroid"
+        case 0x05: "Agfa-Gevaert"
+        case 0x06: "Microsoft (MTP)"
+        case 0x0A: "Nikon"
+        case 0x0B: "Canon"
+        case 0x0D: "Pentax"
+        case 0x0E: "Fujifilm"
+        case 0x11: "Sony"
+        case 0x1A: "Samsung"
+        case 0x1C: "Panasonic"
+        default: nil
+        }
+    }
 
     public init(decoding data: some Collection<UInt8>) throws(PTPError) {
         var r = PTPDataReader(data)

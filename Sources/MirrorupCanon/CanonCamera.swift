@@ -1,11 +1,12 @@
 import Foundation
 public import MirrorupPTP
 public import MirrorupCapture
+import MirrorupDevices
 import MirrorupDiagnostics
 
 /// Canon EOS live-view backend. Owns the PTP session and all Canon-specific state; serializes
 /// device access by being an actor (and through `PTPSession`'s transaction gate).
-public actor CanonCamera: CameraBackend {
+public actor CanonCamera: CameraBackend, LiveViewPolling {
     public struct Options: Sendable {
         /// Pause between GetViewfinderData polls while the camera answers "not ready".
         public var notReadyRetryInterval: Duration = .milliseconds(3)
@@ -65,16 +66,8 @@ public actor CanonCamera: CameraBackend {
     var collectedObjects: [CanonObjectInfo]?
     /// Incremented by stopLiveView/disconnect so a suspended nextFrame notices it was superseded.
     private var epoch: UInt64 = 0
-    public private(set) var pollStatistics = PollStatistics()
-
     /// GetViewfinderData accounting for benchmarks and diagnostics.
-    public struct PollStatistics: Sendable, Equatable {
-        public var requests = 0
-        public var frames = 0
-        public var notReady = 0
-        public var invalidPayloads = 0
-        public var payloadBytes = 0
-    }
+    public private(set) var pollStatistics = LiveViewPollStatistics()
 
     public init(session: PTPSession, identity: CameraIdentity, options: Options = Options()) {
         self.session = session
@@ -118,9 +111,7 @@ public actor CanonCamera: CameraBackend {
             }
             let ptpVersion = String(format: "%d.%02d", info.standardVersion / 100, info.standardVersion % 100)
             add(.init(.protocolVersion, value: ptpVersion, raw: String(info.standardVersion)), to: .device)
-            let vendor = info.vendorExtensionID == PTPDeviceInfo.vendorExtensionCanon ? "Canon"
-                : info.vendorExtensionID == PTPDeviceInfo.vendorExtensionMicrosoft ? "Microsoft (MTP)"
-                : "Vendor \(Self.hex(info.vendorExtensionID))"
+            let vendor = info.vendorExtensionName ?? "Vendor \(Self.hex(info.vendorExtensionID))"
             let vendorValue = info.vendorExtensionDescription.isEmpty ? "\(vendor), version \(info.vendorExtensionVersion)"
                 : "\(vendor), version \(info.vendorExtensionVersion): \(info.vendorExtensionDescription)"
             add(.init(.vendorExtension, value: vendorValue, raw: Self.hex(info.vendorExtensionID)), to: .device)
@@ -445,32 +436,10 @@ public actor CanonCamera: CameraBackend {
     }
 
     static func map(_ error: PTPError, context: String, liveView: Bool = false) -> CameraError {
-        let detail = "\(context): \(error.description)"
-        switch error {
-        case .transport(let t):
-            switch t {
-            case .disconnected, .notOpen:
-                return CameraError(.disconnected, "The camera was disconnected.", detail: detail)
-            case .timedOut:
-                return CameraError(.timeout, "The camera stopped responding.", detail: detail)
-            case .exclusiveAccess:
-                return CameraError(.inUseByAnotherApplication, "Another application is using the camera.", detail: detail)
-            case .accessDenied:
-                return CameraError(.accessDenied, "Mirrorup is not allowed to control the camera.", detail: detail)
-            case .cancelled:
-                return CameraError(.cancelled, "Cancelled.", detail: detail)
-            case .io:
-                return CameraError(.protocolViolation, "Communication with the camera failed.", detail: detail)
-            }
-        case .response(let code, _) where liveView:
+        if liveView, case .response(let code, _) = error {
             return CameraError(.liveViewUnavailable, "The camera could not enter live view. Check that it is in a shooting mode and not showing a menu.",
                                detail: "\(context): \(CanonResponse.describe(code))")
-        case .response(let code, _):
-            return CameraError(.protocolViolation, "The camera rejected a command.", detail: "\(context): \(CanonResponse.describe(code))")
-        case .sessionNotOpen:
-            return CameraError(.disconnected, "The camera session is not open.", detail: detail)
-        default:
-            return CameraError(.protocolViolation, "The camera sent data Mirrorup does not understand.", detail: detail)
         }
+        return CameraError(ptp: error, context: context, describeResponse: CanonResponse.describe)
     }
 }

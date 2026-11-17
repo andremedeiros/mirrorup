@@ -91,7 +91,7 @@ public struct CameraMetadata: Sendable, Equatable, Codable {
         // Focus
         case focusMode, liveViewAFMethod
         // Image
-        case imageQuality, pictureStyle, colorSpace, aspectRatio
+        case imageQuality, imageStyle, colorSpace, aspectRatio
         // White balance
         case whiteBalance, colorTemperature, whiteBalanceShift
         // Live view
@@ -141,7 +141,7 @@ public struct CameraMetadata: Sendable, Equatable, Codable {
             case .focusMode: "Focus Mode"
             case .liveViewAFMethod: "Live View AF Method"
             case .imageQuality: "Image Quality"
-            case .pictureStyle: "Picture Style"
+            case .imageStyle: "Image Style"
             case .colorSpace: "Color Space"
             case .aspectRatio: "Aspect Ratio"
             case .whiteBalance: "White Balance"

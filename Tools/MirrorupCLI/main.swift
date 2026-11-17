@@ -1,5 +1,5 @@
 import Foundation
-import MirrorupCanon
+import MirrorupDevices
 import MirrorupCapture
 import MirrorupDiagnostics
 import MirrorupPTP
@@ -9,7 +9,7 @@ let usage = """
     usage: mirrorup <command> [options]
 
     commands:
-      devices                         list attached Canon USB devices and Image Capture cameras
+      devices                         list attached cameras and which driver supports each
       inspect                         USB descriptors, endpoints, interface ownership, claim test
       camera info [--json F]          everything the camera reports, decoded: identity, lens,
                                       exposure, image, power, capabilities (--json writes all of it,
@@ -57,9 +57,9 @@ struct Arguments {
         }
     }
 
-    func transport() throws -> CanonBackendFactory.Transport {
+    func transport() throws -> CameraTransport {
         guard let raw = options["transport"] else { return .imageCapture }
-        guard let t = CanonBackendFactory.Transport(rawValue: raw == "imagecapture" ? "imageCapture" : raw) else {
+        guard let t = CameraTransport(rawValue: raw == "imagecapture" ? "imageCapture" : raw) else {
             throw CLIError("unknown transport '\(raw)' (expected imagecapture or usb)")
         }
         return t

@@ -9,7 +9,7 @@ struct CameraControlsView: View {
     @Bindable var model: AppModel
 
     private static let pickers: [CameraSetting] = [
-        .whiteBalance, .colorTemperature, .pictureStyle, .aperture, .shutterSpeed, .iso, .autofocusMethod,
+        .whiteBalance, .colorTemperature, .imageStyle, .aperture, .shutterSpeed, .iso, .autofocusMethod,
     ]
 
     var body: some View {
@@ -25,17 +25,17 @@ struct CameraControlsView: View {
                     ForEach(Self.pickers, id: \.self) { setting in
                         if let state = model.controlState?.adjustable(setting) {
                             GridRow {
-                                RowLabel(setting.title)
-                                SettingPicker(model: model, setting: setting, options: state.options)
+                                RowLabel(state.title)
+                                SettingPicker(model: model, state: state)
                                     .disabled(model.isApplyingControl)
                             }
                         }
                     }
-                    if model.controlState?.zoom != nil {
+                    if let levels = model.controlState?.zoomLevels, levels.count > 1, model.controlState?.zoom != nil {
                         GridRow {
                             RowLabel("Zoom")
                             Picker("Zoom", selection: $model.zoomSelection) {
-                                ForEach(CameraZoom.allCases, id: \.self) { Text($0.title).tag($0) }
+                                ForEach(levels, id: \.self) { Text($0.title).tag($0) }
                             }
                             .labelsHidden()
                             .pickerStyle(.segmented)
@@ -74,18 +74,9 @@ struct CameraControlsView: View {
         .controlSize(.small)
     }
 
-    /// One line explaining what is missing, most specific first.
+    /// One line from the backend on what is locked and how to unlock it; why photos are off first.
     private var hint: String? {
-        guard let state = model.controlState else { return nil }
-        if let reason = state.photoUnavailableReason { return reason }
-        if !state.settings.values.contains(where: \.isAdjustable)
-            || state.adjustable(.exposureCompensation) == nil {
-            return "Set the camera's mode dial to P, Av, Tv or M for exposure and color controls."
-        }
-        if state.adjustable(.autofocusMethod) != nil, state.canAutofocus, !state.canFocusAtPoint {
-            return "Choose 1-point AF in Focus Mode to focus by clicking the preview, and to zoom."
-        }
-        return nil
+        model.controlState.flatMap { $0.photoUnavailableReason ?? $0.hint }
     }
 }
 
@@ -134,12 +125,11 @@ private struct BrightnessSlider: View {
 
 private struct SettingPicker: View {
     @Bindable var model: AppModel
-    let setting: CameraSetting
-    let options: [CameraSettingOption]
+    let state: CameraSettingState
 
     var body: some View {
-        Picker(setting.title, selection: $model[setting: setting]) {
-            ForEach(options) { Text($0.title).tag($0.value) }
+        Picker(state.title, selection: $model[setting: state.setting]) {
+            ForEach(state.options) { Text($0.title).tag($0.value) }
         }
         .labelsHidden()
         .pickerStyle(.menu)
@@ -160,7 +150,7 @@ private struct ActionRow: View {
             HStack(spacing: 8) {
                 if model.controlState?.canAutofocus == true {
                     Button("Focus", systemImage: "viewfinder") { model.autofocus() }
-                        .help("Autofocus. In 1-point AF, click the preview to focus on a spot.")
+                        .help("Autofocus. Click the preview to focus on a spot, where the camera's focus mode allows it.")
                 }
                 if model.controlState?.canCapturePhoto == true {
                     Button("Take Photo", systemImage: "camera") { model.capturePhoto() }

@@ -10,6 +10,8 @@ public enum Diagnostics {
     public static let ptp = Logger(subsystem: subsystem, category: "ptp")
     public static let imageCapture = Logger(subsystem: subsystem, category: "imagecapture")
     public static let canon = Logger(subsystem: subsystem, category: "canon")
+    /// Camera discovery and driver selection.
+    public static let devices = Logger(subsystem: subsystem, category: "devices")
     public static let capture = Logger(subsystem: subsystem, category: "capture")
     public static let virtualCamera = Logger(subsystem: subsystem, category: "virtualcamera")
     public static let app = Logger(subsystem: subsystem, category: "app")

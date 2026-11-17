@@ -34,6 +34,11 @@ public final class ImageCaptureBrowser: NSObject {
         ) ?? .camera
     }
 
+    public var isStarted: Bool { started }
+
+    /// Cameras ImageCaptureCore currently reports, in arrival order.
+    public var devices: [ICCameraDevice] { cameras }
+
     public func start() {
         guard !started else { return }
         started = true
