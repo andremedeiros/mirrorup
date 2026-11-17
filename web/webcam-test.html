@@ -1,0 +1,209 @@
+<!doctype html>
+<!--
+  Mirrorup webcam test page. Self-contained: no external assets.
+  getUserMedia needs a secure context; http://localhost counts. Serve it with:
+    cd web && python3 -m http.server 8000   # then open http://localhost:8000/webcam-test.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirrorup webcam test</title>
+<style>
+  :root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 16px; display: grid; gap: 12px; grid-template-columns: minmax(320px, 2fr) minmax(260px, 1fr); }
+  h1 { grid-column: 1 / -1; margin: 0; font-size: 20px; }
+  .controls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select { min-width: 280px; }
+  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+  td:first-child { opacity: 0.7; white-space: nowrap; }
+  td:last-child { word-break: break-all; }
+  #log { grid-column: 1 / -1; height: 220px; overflow: auto; margin: 0; padding: 8px; font: 12px ui-monospace, monospace;
+         background: color-mix(in srgb, currentColor 6%, transparent); border-radius: 8px; white-space: pre-wrap; }
+  .error { color: #d33; }
+</style>
+</head>
+<body>
+<h1>Mirrorup webcam test</h1>
+
+<div class="controls">
+  <button id="permission">Request camera permission</button>
+  <label>Camera <select id="devices" disabled><option>Grant permission first</option></select></label>
+  <button id="start" disabled>Start</button>
+  <button id="stop" disabled>Stop</button>
+  <button id="clear">Clear log</button>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+
+<table>
+  <tbody>
+    <tr><td>Track</td><td id="s-label">–</td></tr>
+    <tr><td>State</td><td id="s-state">–</td></tr>
+    <tr><td>Width × height</td><td id="s-size">–</td></tr>
+    <tr><td>Frame rate (settings)</td><td id="s-rate">–</td></tr>
+    <tr><td>Device ID</td><td id="s-device">–</td></tr>
+    <tr><td>Video element size</td><td id="s-video">–</td></tr>
+    <tr><td>Received fps (last 1 s)</td><td id="s-fps">–</td></tr>
+    <tr><td>Frames received</td><td id="s-frames">–</td></tr>
+    <tr><td>Longest gap (last 1 s)</td><td id="s-gap">–</td></tr>
+  </tbody>
+</table>
+
+<pre id="log"></pre>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const video = $("video");
+const devicesSelect = $("devices");
+let stream = null;
+let frameCallbackHandle = null;
+let statsTimer = null;
+
+function log(message, isError = false) {
+  const line = document.createElement("div");
+  line.textContent = `${new Date().toISOString()}  ${message}`;
+  if (isError) line.className = "error";
+  $("log").append(line);
+  $("log").scrollTop = $("log").scrollHeight;
+  (isError ? console.error : console.log)(message);
+}
+
+function describeError(error) {
+  return error && error.name ? `${error.name}: ${error.message}` : String(error);
+}
+
+async function refreshDevices() {
+  const previous = devicesSelect.value;
+  const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+  devicesSelect.replaceChildren();
+  for (const device of devices) {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = device.label || `(unlabelled camera ${device.deviceId.slice(0, 8)})`;
+    devicesSelect.append(option);
+  }
+  const preferred = devices.find((d) => d.deviceId === previous)
+    ?? devices.find((d) => /mirrorup/i.test(d.label));
+  if (preferred) devicesSelect.value = preferred.deviceId;
+  devicesSelect.disabled = devices.length === 0;
+  $("start").disabled = devices.length === 0;
+  log(`videoinput devices (${devices.length}): ${devices.map((d) => d.label || d.deviceId).join(" | ") || "none"}`);
+}
+
+async function requestPermission() {
+  try {
+    // A throwaway stream unlocks device labels; stop it immediately.
+    const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    probe.getTracks().forEach((t) => t.stop());
+    log("Camera permission granted");
+    await refreshDevices();
+  } catch (error) {
+    log(`Permission request failed: ${describeError(error)}`, true);
+  }
+}
+
+async function start() {
+  stop();
+  const deviceId = devicesSelect.value;
+  const constraints = {
+    audio: false,
+    video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+  };
+  log(`getUserMedia ${JSON.stringify(constraints.video)}`);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (error) {
+    log(`getUserMedia failed: ${describeError(error)}`, true);
+    return;
+  }
+  const [track] = stream.getVideoTracks();
+  track.addEventListener("ended", () => log("Track ended (device removed or stopped by the system)", true));
+  track.addEventListener("mute", () => log("Track muted (no frames arriving)"));
+  track.addEventListener("unmute", () => log("Track unmuted"));
+  log(`Started "${track.label}" settings=${JSON.stringify(track.getSettings())}`);
+
+  video.srcObject = stream;
+  try {
+    await video.play();
+  } catch (error) {
+    log(`video.play() failed: ${describeError(error)}`, true);
+  }
+  $("start").disabled = true;
+  $("stop").disabled = false;
+  measureFrames();
+}
+
+function stop() {
+  if (frameCallbackHandle !== null && "cancelVideoFrameCallback" in video) video.cancelVideoFrameCallback(frameCallbackHandle);
+  frameCallbackHandle = null;
+  clearInterval(statsTimer);
+  statsTimer = null;
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    log("Stopped");
+  }
+  stream = null;
+  video.srcObject = null;
+  $("start").disabled = devicesSelect.disabled;
+  $("stop").disabled = true;
+}
+
+function measureFrames() {
+  const frameTimes = [];
+  let total = 0;
+
+  if ("requestVideoFrameCallback" in video) {
+    const onFrame = (now) => {
+      frameTimes.push(now);
+      total += 1;
+      frameCallbackHandle = video.requestVideoFrameCallback(onFrame);
+    };
+    frameCallbackHandle = video.requestVideoFrameCallback(onFrame);
+  } else {
+    log("requestVideoFrameCallback is not supported; received fps unavailable", true);
+  }
+
+  statsTimer = setInterval(() => {
+    const now = performance.now();
+    while (frameTimes.length && frameTimes[0] < now - 1000) frameTimes.shift();
+    let gap = 0;
+    for (let i = 1; i < frameTimes.length; i++) gap = Math.max(gap, frameTimes[i] - frameTimes[i - 1]);
+
+    const track = stream?.getVideoTracks()[0];
+    const s = track ? track.getSettings() : {};
+    $("s-label").textContent = track?.label ?? "–";
+    $("s-state").textContent = track ? `${track.readyState}${track.muted ? " (muted)" : ""}` : "–";
+    $("s-size").textContent = s.width ? `${s.width} × ${s.height}` : "–";
+    $("s-rate").textContent = s.frameRate ? s.frameRate.toFixed(2) : "–";
+    $("s-device").textContent = s.deviceId ?? "–";
+    $("s-video").textContent = video.videoWidth ? `${video.videoWidth} × ${video.videoHeight}` : "–";
+    $("s-fps").textContent = frameTimes.length ? String(frameTimes.length) : "0";
+    $("s-frames").textContent = String(total);
+    $("s-gap").textContent = gap ? `${gap.toFixed(1)} ms` : "–";
+  }, 250);
+}
+
+if (!navigator.mediaDevices?.getUserMedia) {
+  log("navigator.mediaDevices is unavailable. Open this page from http://localhost or https.", true);
+} else {
+  navigator.mediaDevices.addEventListener("devicechange", async () => {
+    log("devicechange event");
+    try { await refreshDevices(); } catch (error) { log(`enumerateDevices failed: ${describeError(error)}`, true); }
+  });
+  $("permission").addEventListener("click", requestPermission);
+  $("start").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+  $("clear").addEventListener("click", () => $("log").replaceChildren());
+  devicesSelect.addEventListener("change", () => { if (stream) start(); });
+  window.addEventListener("error", (e) => log(`Uncaught error: ${e.message}`, true));
+  window.addEventListener("unhandledrejection", (e) => log(`Unhandled rejection: ${describeError(e.reason)}`, true));
+  // If permission was granted before, labels are already available.
+  refreshDevices().catch((error) => log(`enumerateDevices failed: ${describeError(error)}`, true));
+}
+</script>
+</body>
+</html>

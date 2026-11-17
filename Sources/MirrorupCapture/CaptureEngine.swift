@@ -1,0 +1,86 @@
+import MirrorupDiagnostics
+
+/// Owns the capture pipeline: one capture loop at a time pulls frames from a `CameraBackend`,
+/// decodes them and publishes them to `frames`, recovering from failures with backoff.
+public actor CaptureEngine {
+    /// Newest decoded frame; consumers pull from here at their own pace.
+    public nonisolated let frames: LatestFrameBuffer
+
+    private let configuration: CaptureConfiguration
+    private let makeBackend: @Sendable () async throws(CameraError) -> any CameraBackend
+    private nonisolated let core: CaptureCore
+    /// The loop started by the latest `start()`, until `stop()` cancels it.
+    private var running: Task<Void, Never>?
+    /// The most recently started loop, kept until it has fully torn down so `stop()` and the next
+    /// `start()` can wait for it (two loops must never talk to the camera at once).
+    private var lastLoop: Task<Void, Never>?
+
+    public init(
+        configuration: CaptureConfiguration = .init(),
+        makeBackend: @escaping @Sendable () async throws(CameraError) -> any CameraBackend
+    ) {
+        self.configuration = configuration
+        self.makeBackend = makeBackend
+        let frames = LatestFrameBuffer()
+        self.frames = frames
+        core = CaptureCore(frames: frames)
+    }
+
+    deinit {
+        running?.cancel()
+        frames.close()
+    }
+
+    /// Starts capturing. Idempotent: while a loop is active, further calls do nothing.
+    public func start() {
+        if running != nil, core.isActive { return }
+        let generation = core.beginRun(maxAttemptsBeforeFailing: configuration.recovery.maxAttemptsBeforeFailing)
+        let loop = CaptureLoop(
+            configuration: configuration, makeBackend: makeBackend, core: core, frames: frames, generation: generation
+        )
+        let previous = lastLoop
+        let task = Task {
+            // A loop that ended on its own (failure) or is still tearing down must release the camera first.
+            await previous?.value
+            await loop.run()
+        }
+        running = task
+        lastLoop = task
+    }
+
+    /// Stops capturing and returns once live view is stopped and the backend disconnected. Idempotent.
+    public func stop() async {
+        if let running {
+            running.cancel()
+            self.running = nil
+            core.invalidateRun()
+        }
+        guard let loop = lastLoop else { return }
+        let generation = core.generation
+        await loop.value
+        // A `start()` that ran while we waited owns the state now.
+        guard core.generation == generation else { return }
+        core.finishStop()
+        frames.clear()
+        lastLoop = nil
+    }
+
+    /// A stream of status updates: the current status immediately, then every state change and
+    /// metrics refreshes at most ~4 Hz. Slow readers only see the newest status.
+    public nonisolated func statusStream() -> AsyncStream<CaptureStatus> {
+        core.subscribe()
+    }
+
+    public var status: CaptureStatus { core.currentStatus() }
+
+    /// Called by the consumer after it handed `frame` to its sink at host time `hostTime`.
+    public func reportDelivered(_ frame: DecodedFrame, at hostTime: UInt64) {
+        core.recordDelivered(frame, at: hostTime)
+    }
+
+    /// Whether a capture loop exists (running or still tearing down). For tests.
+    var hasLoop: Bool { lastLoop != nil }
+
+    /// Whether the loop started by the latest `start()` has not been stopped. For tests.
+    var isRunning: Bool { running != nil }
+}

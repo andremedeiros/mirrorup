@@ -1,0 +1,122 @@
+# XcodeGen spec: the single source of truth for the Xcode project, Info.plists and entitlements.
+# Nothing it generates is committed. Generate with `make project` (or
+# `DEVELOPMENT_TEAM=<team id> xcodegen generate` from this directory).
+name: Mirrorup
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  groupSortPosition: top
+  xcodeVersion: "27.2"
+
+settings:
+  base:
+    # Your signing team, from the environment (the Makefile derives it from the keychain's
+    # "Apple Development" certificate). The Camera Extension is a system extension and must be signed.
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: Apple Development
+    APP_BUNDLE_ID: cool.andre.Mirrorup
+    EXTENSION_BUNDLE_ID: $(APP_BUNDLE_ID).CameraExtension
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_VERSION: "6.0"
+    SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+    SWIFT_UPCOMING_FEATURE_INTERNAL_IMPORTS_BY_DEFAULT: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  Mirrorup:
+    path: ..
+
+targets:
+  Mirrorup:
+    type: application
+    platform: macOS
+    sources:
+      - path: MirrorupApp
+      - path: Shared
+    dependencies:
+      - target: MirrorupCameraExtension
+      - package: Mirrorup
+        product: MirrorupCapture
+      - package: Mirrorup
+        product: MirrorupCanon
+      - package: Mirrorup
+        product: MirrorupDiagnostics
+    settings:
+      base:
+        PRODUCT_NAME: Mirrorup
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        ENABLE_APP_SANDBOX: NO
+    info:
+      path: MirrorupApp/Info.plist
+      properties:
+        CFBundleDisplayName: Mirrorup
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.video
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu-bar app: no Dock icon.
+        LSUIElement: true
+        NSCameraUsageDescription: Mirrorup needs camera access to connect to your Canon camera and publish its picture as the Mirrorup Camera.
+        NSHumanReadableCopyright: Mirrorup is not affiliated with Canon Inc.
+        # Read by ExtensionManager so the identifier is defined once, here.
+        MirrorupCameraExtensionBundleIdentifier: $(EXTENSION_BUNDLE_ID)
+    entitlements:
+      path: MirrorupApp/Mirrorup.entitlements
+      properties:
+        # Activate the embedded Camera Extension with OSSystemExtensionRequest.
+        com.apple.developer.system-extension.install: true
+        # Hardened runtime: CoreMediaIO/ImageCaptureCore camera access (the app is not sandboxed).
+        com.apple.security.device.camera: true
+
+  MirrorupCameraExtension:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: MirrorupCameraExtension
+      - path: Shared
+    dependencies:
+      - package: Mirrorup
+        product: MirrorupDiagnostics
+    settings:
+      base:
+        # System extensions are looked up as <bundle id>.systemextension.
+        PRODUCT_NAME: $(EXTENSION_BUNDLE_ID)
+        PRODUCT_BUNDLE_IDENTIFIER: $(EXTENSION_BUNDLE_ID)
+        ENABLE_APP_SANDBOX: YES
+        SKIP_INSTALL: YES
+    info:
+      path: MirrorupCameraExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Mirrorup Camera
+        CFBundlePackageType: $(PRODUCT_BUNDLE_PACKAGE_TYPE)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSSystemExtensionUsageDescription: Publishes your Canon camera as the Mirrorup Camera for FaceTime, Zoom, browsers and other video apps.
+        CMIOExtension:
+          # The sandbox only lets the extension register Mach services under one of its app groups.
+          CMIOExtensionMachServiceName: $(TeamIdentifierPrefix)$(EXTENSION_BUNDLE_ID)
+    entitlements:
+      path: MirrorupCameraExtension/MirrorupCameraExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)$(APP_BUNDLE_ID)
+
+schemes:
+  Mirrorup:
+    build:
+      targets:
+        Mirrorup: all
+        MirrorupCameraExtension: all
+    run:
+      config: Debug
+    archive:
+      config: Release

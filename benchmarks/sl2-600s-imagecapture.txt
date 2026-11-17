@@ -1,0 +1,73 @@
+benchmarking Canon EOS Rebel SL2 via ImageCaptureCore for 600.0 seconds (decode: on)
+     10s     299 frames   29.9 fps  acq p50 14.5 ms
+     20s     599 frames   29.9 fps  acq p50 14.5 ms
+     30s     899 frames   29.9 fps  acq p50 14.7 ms
+     40s    1199 frames   29.9 fps  acq p50 14.8 ms
+     50s    1499 frames   29.9 fps  acq p50 14.9 ms
+     60s    1799 frames   30.0 fps  acq p50 15.1 ms
+     70s    2099 frames   30.0 fps  acq p50 15.1 ms
+     80s    2399 frames   30.0 fps  acq p50 15.1 ms
+     90s    2698 frames   29.9 fps  acq p50 15.1 ms
+    100s    2998 frames   29.9 fps  acq p50 15.1 ms
+    110s    3298 frames   30.0 fps  acq p50 15.0 ms
+    120s    3598 frames   30.0 fps  acq p50 15.0 ms
+    130s    3898 frames   30.0 fps  acq p50 15.0 ms
+    140s    4198 frames   30.0 fps  acq p50 15.1 ms
+    150s    4498 frames   30.0 fps  acq p50 15.1 ms
+    160s    4798 frames   30.0 fps  acq p50 15.1 ms
+    170s    5098 frames   30.0 fps  acq p50 15.1 ms
+    180s    5398 frames   30.0 fps  acq p50 15.1 ms
+    190s    5699 frames   30.0 fps  acq p50 15.1 ms
+    200s    6000 frames   30.0 fps  acq p50 15.1 ms
+    210s    6300 frames   30.0 fps  acq p50 15.0 ms
+    220s    6600 frames   30.0 fps  acq p50 15.0 ms
+    230s    6900 frames   30.0 fps  acq p50 15.0 ms
+    240s    7200 frames   30.0 fps  acq p50 15.0 ms
+    250s    7500 frames   30.0 fps  acq p50 15.0 ms
+    260s    7800 frames   30.0 fps  acq p50 15.0 ms
+    270s    8100 frames   30.0 fps  acq p50 15.0 ms
+    280s    8400 frames   30.0 fps  acq p50 15.0 ms
+    290s    8700 frames   30.0 fps  acq p50 15.0 ms
+    300s    9000 frames   30.0 fps  acq p50 15.0 ms
+    310s    9300 frames   30.0 fps  acq p50 15.0 ms
+    320s    9600 frames   30.0 fps  acq p50 15.0 ms
+    330s    9900 frames   30.0 fps  acq p50 15.0 ms
+    340s   10200 frames   30.0 fps  acq p50 15.0 ms
+    350s   10500 frames   30.0 fps  acq p50 15.0 ms
+    360s   10800 frames   30.0 fps  acq p50 15.0 ms
+    370s   11100 frames   30.0 fps  acq p50 15.0 ms
+    380s   11400 frames   30.0 fps  acq p50 15.0 ms
+    390s   11700 frames   30.0 fps  acq p50 15.0 ms
+    401s   12000 frames   30.0 fps  acq p50 15.0 ms
+    411s   12301 frames   30.0 fps  acq p50 15.0 ms
+    421s   12601 frames   30.0 fps  acq p50 15.0 ms
+    431s   12901 frames   30.0 fps  acq p50 15.0 ms
+    441s   13201 frames   30.0 fps  acq p50 15.0 ms
+    451s   13501 frames   30.0 fps  acq p50 15.0 ms
+    461s   13801 frames   30.0 fps  acq p50 15.0 ms
+    471s   14101 frames   30.0 fps  acq p50 15.0 ms
+    481s   14401 frames   30.0 fps  acq p50 15.0 ms
+    491s   14701 frames   30.0 fps  acq p50 15.0 ms
+    501s   15001 frames   30.0 fps  acq p50 15.0 ms
+    511s   15301 frames   30.0 fps  acq p50 15.0 ms
+    521s   15601 frames   30.0 fps  acq p50 15.1 ms
+    531s   15901 frames   30.0 fps  acq p50 15.1 ms
+    541s   16201 frames   30.0 fps  acq p50 15.1 ms
+    551s   16501 frames   30.0 fps  acq p50 15.1 ms
+    561s   16801 frames   30.0 fps  acq p50 15.1 ms
+    571s   17101 frames   30.0 fps  acq p50 15.1 ms
+    581s   17402 frames   30.0 fps  acq p50 15.1 ms
+    591s   17702 frames   30.0 fps  acq p50 15.1 ms
+
+camera              Canon EOS Rebel SL2 via ImageCaptureCore
+source frames       1024x576 JPEG, mean 208 KiB
+streamed            600.0 s, 17980 frames, 29.96 fps measured
+first frame         494 ms after live view start
+viewfinder polls    55259 (37279 not ready, 67%), 0 invalid payloads
+acquisition         n=17980 min=6.83 p50=15.10 p95=20.93 p99=24.93 max=52.18 mean=15.32 ms
+inter-frame         n=17979 min=10.74 p50=33.38 p95=39.81 p99=44.23 max=139.10 mean=33.37 ms
+decode+scale        n=17980 min=2.50 p50=4.28 p95=8.80 p99=15.07 max=129.55 mean=4.96 ms
+capture->decoded    n=17980 min=2.52 p50=4.35 p95=9.01 p99=15.33 max=129.64 mean=5.05 ms
+CPU                 6.9% of one core (whole process)
+memory              10.6 MB peak physical footprint
+wrote benchmarks/sl2-600s-imagecapture.json

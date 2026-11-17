@@ -1,0 +1,100 @@
+import Foundation
+import MirrorupCanon
+import MirrorupCapture
+import MirrorupDiagnostics
+import MirrorupPTP
+import MirrorupUSB
+
+let usage = """
+    usage: mirrorup <command> [options]
+
+    commands:
+      devices                         list attached Canon USB devices and Image Capture cameras
+      inspect                         USB descriptors, endpoints, interface ownership, claim test
+      ptp info                        open a PTP session and print parsed GetDeviceInfo
+      ptp operations                  list operations, events and properties the camera supports
+      liveview snapshot --output F    save one live-view JPEG frame to F
+      liveview benchmark [--duration S] [--no-decode] [--json F]
+                                      stream live view for S seconds (default 60) and report
+                                      measured throughput and timing distributions
+
+    options:
+      --transport imagecapture|usb    PTP transport (default imagecapture; usb needs the PTP
+                                      interface to be unclaimed, see docs/usb-feasibility.md)
+    """
+
+struct CLIError: Error, CustomStringConvertible {
+    var description: String
+    init(_ description: String) { self.description = description }
+}
+
+struct Arguments {
+    var positional: [String] = []
+    var options: [String: String] = [:]
+    var flags: Set<String> = []
+
+    init(_ args: [String]) throws {
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a.hasPrefix("--") {
+                let name = String(a.dropFirst(2))
+                if ["no-decode", "help"].contains(name) {
+                    flags.insert(name)
+                } else {
+                    guard i + 1 < args.count else { throw CLIError("missing value for \(a)") }
+                    options[name] = args[i + 1]
+                    i += 1
+                }
+            } else {
+                positional.append(a)
+            }
+            i += 1
+        }
+    }
+
+    func transport() throws -> CanonBackendFactory.Transport {
+        guard let raw = options["transport"] else { return .imageCapture }
+        guard let t = CanonBackendFactory.Transport(rawValue: raw == "imagecapture" ? "imageCapture" : raw) else {
+            throw CLIError("unknown transport '\(raw)' (expected imagecapture or usb)")
+        }
+        return t
+    }
+}
+
+struct MirrorupCLI {
+    static func main() async {
+        do {
+            let args = try Arguments(Array(CommandLine.arguments.dropFirst()))
+            if args.flags.contains("help") || args.positional.isEmpty {
+                print(usage)
+                exit(args.positional.isEmpty && !args.flags.contains("help") ? 64 : 0)
+            }
+            switch (args.positional.first, args.positional.dropFirst().first) {
+            case ("devices", _): await Commands.devices()
+            case ("inspect", _): Commands.inspect()
+            case ("ptp", "info"): try await Commands.ptpInfo(transport: args.transport())
+            case ("ptp", "operations"): try await Commands.ptpOperations(transport: args.transport())
+            case ("liveview", "snapshot"):
+                guard let output = args.options["output"] else { throw CLIError("snapshot needs --output <file.jpg>") }
+                try await Commands.snapshot(output: output, transport: args.transport())
+            case ("liveview", "benchmark"):
+                let duration = Double(args.options["duration"] ?? "60") ?? 60
+                try await Benchmark.run(
+                    duration: .milliseconds(Int(duration * 1000)), decode: !args.flags.contains("no-decode"),
+                    jsonPath: args.options["json"], transport: args.transport())
+            default:
+                throw CLIError("unknown command '\(args.positional.joined(separator: " "))'\n\n\(usage)")
+            }
+            exit(0)
+        } catch let error as CameraError {
+            FileHandle.standardError.write(Data("error: \(error.message)\n  detail: \(error.detail ?? "none")\n".utf8))
+            exit(1)
+        } catch {
+            FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+}
+
+await MirrorupCLI.main()
