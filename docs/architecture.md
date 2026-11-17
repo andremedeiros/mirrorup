@@ -32,7 +32,8 @@ flowchart LR
 
 - **Exactly one process owns the camera:** the app. The Camera Extension never touches USB or
   ImageCaptureCore; it can't start capture by itself and shows a "camera not connected" frame
-  until the app feeds it.
+  until the app feeds it. That frame is drawn mirrored so it reads correctly in mirrored
+  self-views (Photo Booth, FaceTime, Zoom); live frames are never mirrored by the extension.
 - **Transport:** `ptpcamerad` owns the USB interface, so the app sends PTP through
   ImageCaptureCore's pass-through (see `usb-feasibility.md`). A direct IOUSBHost transport exists
   for when the interface is free and is exercised by the same PTP stack.

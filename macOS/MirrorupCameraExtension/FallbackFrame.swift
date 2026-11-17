@@ -87,6 +87,12 @@ struct FallbackFrame: @unchecked Sendable {
         context.setFillColor(CGColor(srgbRed: 0.08, green: 0.09, blue: 0.11, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
+        // Drawn mirrored: the frame tells the local user to open Mirrorup, and the self-views they see
+        // it in (Photo Booth, FaceTime, Zoom, browsers' call previews) mirror the picture, which would
+        // otherwise show the text reversed. Live frames are never mirrored here.
+        context.translateBy(x: CGFloat(width), y: 0)
+        context.scaleBy(x: -1, y: 1)
+
         let scale = CGFloat(height) / 720
         drawCentered("Mirrorup Camera", in: context, width: width, baselineY: CGFloat(height) * 0.52,
                      font: CTFontCreateUIFontForLanguage(.emphasizedSystem, 64 * scale, nil),
