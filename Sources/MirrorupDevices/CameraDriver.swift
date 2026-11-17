@@ -73,14 +73,32 @@ public struct CameraRegistry: Sendable {
         throw await notFoundError(on: transport)
     }
 
-    /// The error for "no supported camera": names attached cameras no driver supports, if any.
-    public func notFoundError(on transport: CameraTransport) async -> CameraError {
-        Self.notFound(unsupported: await CameraDiscovery.cameras(on: transport, settle: .zero), drivers: drivers)
+    /// Supported cameras attached over USB, whether or not Image Capture lists them. They carry the
+    /// USB path (`usbHubCount`), which Image Capture doesn't report.
+    public func supportedUSBCameras() -> [DiscoveredCamera] {
+        CameraDiscovery.usbCameras().filter { camera in drivers.contains { $0.supports(camera) } }
     }
 
-    /// The not-found error for a discovery that matched no driver.
-    static func notFound(unsupported: [DiscoveredCamera], drivers: [any CameraDriver]) -> CameraError {
+    /// The error for "no supported camera": names attached cameras no driver supports, if any, and
+    /// says so when a supported camera is on USB but Image Capture doesn't list it.
+    public func notFoundError(on transport: CameraTransport) async -> CameraError {
+        Self.notFound(
+            unsupported: await CameraDiscovery.cameras(on: transport, settle: .zero),
+            unresponsive: transport == .imageCapture ? supportedUSBCameras() : [],
+            drivers: drivers)
+    }
+
+    /// The not-found error for a discovery that matched no driver. `unresponsive`: supported cameras
+    /// on USB that the transport didn't list. A camera that is switched off still enumerates on USB,
+    /// and one wedged by a USB dropout looks the same, so the message covers both.
+    static func notFound(unsupported: [DiscoveredCamera], unresponsive: [DiscoveredCamera] = [],
+                         drivers: [any CameraDriver]) -> CameraError {
         let supported = drivers.map(\.name).joined(separator: ", ")
+        if let camera = unresponsive.first {
+            return CameraError(
+                .notFound, "\(camera.name) is connected but not responding. Turn it on, or if it is on, turn it off and on again.",
+                detail: "on USB, not listed by Image Capture: \(unresponsive.map(\.description).joined(separator: "; ")); drivers: \(supported)")
+        }
         // Image Capture also reports phones and scanners, and camera makers' USB IDs also cover their
         // printers and game controllers: only name something that looks like a camera.
         let camera = unsupported.first { $0.acceptsPTP && $0.vendorName != nil } ?? unsupported.first { $0.vendorName != nil && !$0.acceptsPTP }

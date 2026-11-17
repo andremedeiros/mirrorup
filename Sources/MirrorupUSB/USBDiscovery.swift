@@ -46,6 +46,22 @@ public struct USBDeviceSnapshot: Sendable {
     public var stillImageRegistryInterface: RegistryInterface? {
         interfaces.first { $0.interfaceClass == 6 && $0.interfaceSubClass == 1 && $0.interfaceProtocol == 1 }
     }
+
+    /// USB hubs between the Mac's port and the device (adapters and docks contain one), from the
+    /// location ID; nil when the registry reports none.
+    public var hubCount: Int? { locationID.map(Self.hubCount(locationID:)) }
+
+    /// The location ID's top byte is the bus; then each nibble is the port at one tier: the Mac's
+    /// root port first, then one per hub, zero-padded. 0x00100000 is a device in root port 1;
+    /// 0x00110000 is a device in port 1 of a hub in root port 1.
+    public static func hubCount(locationID: UInt32) -> Int {
+        var tiers = 0
+        for shift in stride(from: 20, through: 0, by: -4) {
+            guard (locationID >> UInt32(shift)) & 0xF != 0 else { break }
+            tiers += 1
+        }
+        return max(tiers - 1, 0)
+    }
 }
 
 public enum USBDiscovery {

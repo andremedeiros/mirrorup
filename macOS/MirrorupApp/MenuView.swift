@@ -9,7 +9,7 @@ struct MenuView: View {
     @State private var refreshedOnce = false
 
     var body: some View {
-        let attention = Attention(cameraAccess: model.cameraAccess, extensionState: model.extensionManager.state)
+        let attention = Attention(cameraAccess: model.cameraAccess, extensionState: model.extensionManager.state, notice: model.notice)
         VStack(alignment: .leading, spacing: 12) {
             LivePreview(model: model, phase: model.phase)
             CameraHeader(
@@ -24,7 +24,7 @@ struct MenuView: View {
             // A problem the user can fix gets its own block with the button; one they can't is just
             // the footer's status line, so the popover never states the same thing twice.
             if let attention, attention.action != nil {
-                AttentionView(attention: attention, extensionManager: model.extensionManager)
+                AttentionView(attention: attention, extensionManager: model.extensionManager, dismiss: model.dismissNotice)
             }
             Divider()
             MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable, name: model.virtualCameraName))
@@ -261,6 +261,7 @@ private extension AppModel.Phase {
 private struct AttentionView: View {
     let attention: Attention
     let extensionManager: ExtensionManager
+    let dismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -268,8 +269,8 @@ private struct AttentionView: View {
                 Text(attention.message)
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                Image(systemName: attention.symbol)
+                    .foregroundStyle(attention.isProblem ? .orange : .secondary)
             }
             .font(.callout)
             if let action = attention.action {
@@ -289,19 +290,22 @@ private struct AttentionView: View {
             extensionManager.openApprovalSettings()
         case .installExtension:
             extensionManager.activate()
+        case .dismiss:
+            dismiss()
         }
     }
 }
 
 private struct Attention {
     enum Action {
-        case openCameraPrivacySettings, openExtensionSettings, installExtension
+        case openCameraPrivacySettings, openExtensionSettings, installExtension, dismiss
 
         var title: String {
             switch self {
             case .openCameraPrivacySettings: "Open Privacy Settings"
             case .openExtensionSettings: "Open System Settings"
             case .installExtension: "Install Camera Extension"
+            case .dismiss: "Dismiss"
             }
         }
     }
@@ -310,8 +314,11 @@ private struct Attention {
     /// One line for the footer, for problems without an action.
     let shortMessage: String
     let action: Action?
+    /// False for notices (an update happened), true for problems.
+    var isProblem = true
+    var symbol: String { isProblem ? "exclamationmark.triangle.fill" : "info.circle.fill" }
 
-    init?(cameraAccess: AVAuthorizationStatus, extensionState: ExtensionManager.State) {
+    init?(cameraAccess: AVAuthorizationStatus, extensionState: ExtensionManager.State, notice: AppModel.Notice?) {
         if cameraAccess == .denied || cameraAccess == .restricted {
             message = "Mirrorup needs camera access to publish the Mirrorup Camera."
             shortMessage = "Camera access needed"
@@ -341,7 +348,20 @@ private struct Attention {
             shortMessage = "Blocked by device management"
             action = nil
         case .checking, .activating, .active, .deactivating:
-            return nil
+            guard let notice else { return nil }
+            switch notice {
+            case let .unstableConnection(drops, throughHub):
+                let fix = throughHub == true
+                    ? "Try another cable, or plug the camera straight into your Mac instead of through an adapter or hub."
+                    : "Try another cable or another USB port on your Mac."
+                message = "The camera's USB connection dropped \(drops) times in the last 10 minutes. \(fix)"
+                shortMessage = "USB connection unstable"
+            case .extensionUpdated:
+                message = "The Mirrorup camera was updated. Video apps that were open, such as FaceTime, Zoom or a browser, need to be reopened to find it."
+                shortMessage = "Camera updated: reopen video apps"
+                isProblem = false
+            }
+            action = .dismiss
         }
     }
 }

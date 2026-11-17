@@ -69,6 +69,12 @@ public struct DiscoveredCamera: Sendable, CustomStringConvertible {
     /// An identity for backends built on this camera; drivers refine it after GetDeviceInfo.
     public var identity: CameraIdentity { CameraIdentity(name: name, transport: transport.description) }
 
+    /// USB hubs between the Mac and the camera (adapters and docks contain one). Known only for
+    /// cameras found by USB enumeration; Image Capture doesn't report where a device is plugged in.
+    public var usbHubCount: Int? {
+        if case .usb(let device) = handle { device.hubCount } else { nil }
+    }
+
     /// Opens a PTP session on the camera's Still Image interface. The session is not opened on the
     /// camera yet (`PTPSession.open()` does that); the transport is claimed.
     public func openPTPSession(commandTimeout: Duration = .seconds(5)) async throws(CameraError) -> PTPSession {

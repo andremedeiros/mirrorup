@@ -47,10 +47,16 @@ flowchart LR
   dropouts never rename it. The app sets the name through a custom device property; the extension
   renames by replacing the device (same device ID, new streams) and remembers the name across
   restarts. The app stops its sink first and postpones the rename while another app streams.
-- **Extension upgrades:** the app activates the embedded extension when its build number differs,
-  then relaunches itself, because a CoreMediaIO client doesn't see the replacement process. macOS
-  27.2 can lose the job of an extension replaced while running (see `AGENTS.md`); the relaunched app
-  then reports that a restart is needed. Video apps that were open may need reopening.
+- **Extension upgrades:** the extension has its own build number, which changes only when its sources
+  do (`macOS/extension-version.sh`), so app-only updates leave a running extension alone. When it
+  changes, the app activates the embedded extension and relaunches itself, because a CoreMediaIO
+  client doesn't see the replacement process; after the relaunch it tells the user to reopen video
+  apps. macOS 27.2 can lose the job of an extension replaced while running (see `AGENTS.md`); the
+  relaunched app then reports that a restart is needed.
+- **USB health:** the capture status counts connections lost while streaming; three within ten
+  minutes (`ConnectionStability`) make the popover say the cable, adapter or port is at fault,
+  naming a hub in the path when the USB location ID shows one. A supported camera on USB that
+  Image Capture doesn't list is reported as connected but not responding.
 
 ## Modules (Swift package)
 

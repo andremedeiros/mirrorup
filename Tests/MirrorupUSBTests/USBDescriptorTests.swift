@@ -58,4 +58,13 @@ private let sl2Config: [UInt8] = [
         #expect(USBError("open", code: kIOReturnInternalError, owner: "pid 1, ptpcamerad").transportError == .exclusiveAccess("pid 1, ptpcamerad"))
         if case .io = USBError("open", code: kIOReturnInternalError).transportError {} else { Issue.record("expected .io") }
     }
+
+    /// The SL2 through a USB-C multiport adapter (which contains a hub) was at 0x00110000; directly
+    /// in a Mac port a device sits at 0x00100000. Other buses carry their number in the top byte.
+    @Test func hubCountFromLocationID() {
+        #expect(USBDeviceSnapshot.hubCount(locationID: 0x0010_0000) == 0)
+        #expect(USBDeviceSnapshot.hubCount(locationID: 0x0011_0000) == 1)
+        #expect(USBDeviceSnapshot.hubCount(locationID: 0x0214_3000) == 2)
+        #expect(USBDeviceSnapshot.hubCount(locationID: 0) == 0)
+    }
 }

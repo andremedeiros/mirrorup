@@ -4,6 +4,8 @@ import Foundation
 import ServiceManagement
 import Observation
 import MirrorupCapture
+import MirrorupCameras
+import MirrorupDevices
 import MirrorupDiagnostics
 import os
 
@@ -162,7 +164,10 @@ final class AppModel {
         engine.setEnhance(enhance)
         extensionManager.isDeviceMissing = { [weak self] in self?.sinkState == .deviceNotFound }
         extensionManager.onReplaced = { [weak self] in self?.relaunchAfterExtensionUpgrade() }
-        if defaults.bool(forKey: Keys.afterExtensionUpgrade) { extensionManager.verifyDeviceAfterUpgrade() }
+        if defaults.bool(forKey: Keys.afterExtensionUpgrade) {
+            extensionManager.verifyDeviceAfterUpgrade()
+            extensionUpdateToAnnounce = true
+        }
         updateVirtualCameraName()
         Task { await launch() }
     }
@@ -588,6 +593,50 @@ final class AppModel {
         sink.setDeviceName(name)
     }
 
+    /// Something worth telling the user that isn't a failure, shown in the popover until dismissed.
+    enum Notice: Equatable {
+        /// The connection dropped `drops` times in `ConnectionStability.window`; `throughHub`: the
+        /// camera is plugged in through a hub (adapters and docks contain one), nil when unknown.
+        case unstableConnection(drops: Int, throughHub: Bool?)
+        /// The Camera Extension was replaced; video apps that were open don't see the new one.
+        case extensionUpdated
+    }
+
+    private(set) var notice: Notice?
+    @ObservationIgnored private var stability = ConnectionStability()
+    /// Disconnect count when the unstable-connection notice was dismissed: it returns only after
+    /// another drop.
+    @ObservationIgnored private var unstableDismissedAt: Int?
+    @ObservationIgnored private var throughHub: Bool?
+    /// Set by the instance relaunched after an extension upgrade, until the notice is dismissed.
+    @ObservationIgnored private var extensionUpdateToAnnounce = false
+
+    func dismissNotice() {
+        switch notice {
+        case .unstableConnection: unstableDismissedAt = status.disconnectCount
+        case .extensionUpdated: extensionUpdateToAnnounce = false
+        case nil: break
+        }
+        updateNotice()
+    }
+
+    private func updateNotice() {
+        let unstable = stability.update(disconnectCount: status.disconnectCount, at: .now)
+        let newNotice: Notice?
+        if unstable, unstableDismissedAt.map({ status.disconnectCount > $0 }) ?? true {
+            if case .unstableConnection = notice {} else {
+                // Read once per episode: enumerating USB is cheap but not free.
+                throughHub = CameraRegistry.builtIn.supportedUSBCameras().first?.usbHubCount.map { $0 > 0 }
+            }
+            newNotice = .unstableConnection(drops: stability.recentDrops, throughHub: throughHub)
+        } else if extensionUpdateToAnnounce, sinkState == .connected {
+            newNotice = .extensionUpdated
+        } else {
+            newNotice = nil
+        }
+        if newNotice != notice { notice = newNotice }
+    }
+
     private func updatePresentation() {
         let newPhase: Phase
         if !wantsStreaming {
@@ -620,6 +669,7 @@ final class AppModel {
             updateVirtualCameraName()
         }
         isVirtualCameraAvailable = sinkState == .connected
+        updateNotice()
         if newPhase != .live { controlState = nil }
         if newPhase == .live && !wasLive {
             // A failure from the previous connection says nothing about this one.

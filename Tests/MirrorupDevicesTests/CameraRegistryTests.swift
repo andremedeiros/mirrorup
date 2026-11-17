@@ -60,6 +60,17 @@ private struct FakeDriver: CameraDriver {
         #expect(noPTP.message.hasPrefix("Sony ILCE-7M3 doesn't offer a PTP connection."))
     }
 
+    /// After a USB dropout the SL2 was back on USB but missing from Image Capture for minutes, and
+    /// "connect your camera with a USB cable" was wrong advice.
+    @Test func supportedCameraOnUSBButNotInImageCaptureIsNotResponding() {
+        let drivers: [any CameraDriver] = [CanonDriver()]
+        let onUSB = DiscoveredCamera.placeholder(name: "Canon Digital Camera", usbVendorID: 0x04A9, usbProductID: 0x32CC, transport: .usb)
+        let error = CameraRegistry.notFound(unsupported: [], unresponsive: [onUSB], drivers: drivers)
+        #expect(error.kind == .notFound)
+        #expect(error.message == "Canon Digital Camera is connected but not responding. Turn it on, or if it is on, turn it off and on again.")
+        #expect(error.detail?.contains("04A9:32CC") == true)
+    }
+
     @Test func knownVendorsAreNamedFromTheUSBVendorID() {
         #expect(sl2.vendorName == "Canon")
         #expect(nikon.vendorName == "Nikon")

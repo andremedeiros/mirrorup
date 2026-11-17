@@ -127,6 +127,9 @@ public struct CaptureStatus: Sendable, Equatable {
     public var lastRecoverableError: CameraError?
     /// Number of completed recoveries (a recovery completes when a frame is published after it).
     public var reconnectCount: Int
+    /// Times the connection to the camera dropped while it was streaming (a `.disconnected` failure).
+    /// Repeated drops point at the cable, adapter or port; see `ConnectionStability`.
+    public var disconnectCount: Int
     /// The latest frame's `CameraFrame.settingsRevision`: changes when the camera reports a setting
     /// change, so a visible UI can re-read metadata and controls instead of polling them.
     public var settingsRevision: UInt64
@@ -137,6 +140,7 @@ public struct CaptureStatus: Sendable, Equatable {
         metrics: FrameMetrics.Snapshot = .init(),
         lastRecoverableError: CameraError? = nil,
         reconnectCount: Int = 0,
+        disconnectCount: Int = 0,
         settingsRevision: UInt64 = 0
     ) {
         self.state = state
@@ -144,6 +148,7 @@ public struct CaptureStatus: Sendable, Equatable {
         self.metrics = metrics
         self.lastRecoverableError = lastRecoverableError
         self.reconnectCount = reconnectCount
+        self.disconnectCount = disconnectCount
         self.settingsRevision = settingsRevision
     }
 }

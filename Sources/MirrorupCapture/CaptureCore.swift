@@ -15,6 +15,7 @@ final class CaptureCore: Sendable {
         var backend: (any CameraBackend)?
         var lastRecoverableError: CameraError?
         var reconnectCount = 0
+        var disconnectCount = 0
         var settingsRevision: UInt64 = 0
         var metrics = FrameMetrics()
         /// Host time of the failure that started the recovery in progress.
@@ -95,6 +96,7 @@ final class CaptureCore: Sendable {
                 switch transition.to {
                 case .recovering(let attempt, _):
                     state.lastRecoverableError = error
+                    if error.kind == .disconnected, transition.from == .streaming { state.disconnectCount += 1 }
                     state.metrics.recordRecoveryAttempt()
                     if state.recoveryStartedAt == nil { state.recoveryStartedAt = now }
                     Diagnostics.capture.error("Capture recovering (attempt \(attempt)): \(error.description, privacy: .public)")
@@ -207,6 +209,7 @@ final class CaptureCore: Sendable {
             metrics: state.metrics.snapshot(framesDropped: frames.droppedCount, now: now),
             lastRecoverableError: state.lastRecoverableError,
             reconnectCount: state.reconnectCount,
+            disconnectCount: state.disconnectCount,
             settingsRevision: state.settingsRevision
         )
     }
