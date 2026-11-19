@@ -97,17 +97,30 @@ xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 
 ## Releases
 
-Pushing a tag `vMAJOR.MINOR[.PATCH]` runs `.github/workflows/release.yml` on GitHub's `xcode-27`
-runner (Xcode 27.2). It runs `make build test`, archives the app signed with Developer ID, notarizes
-and staples it, and attaches `Mirrorup-<version>.zip` and a Sparkle `appcast.xml` to a GitHub release
-with generated notes. The version comes from the tag (`MARKETING_VERSION`), the app's build number
-from the workflow run number (`CURRENT_PROJECT_VERSION`), the extension's from its own history
-(above; the checkout fetches the full history for it). Installed apps replace the extension only
-when that number changes.
+Releases are made on GitHub, never from a laptop. Actions → **Release** → **Run workflow** (branch
+`main`) → enter the version (`1.1.0`). Anyone with write access can start a run; it then waits for a
+reviewer of the `release` environment (André or Dana; nobody approves their own run, admins can
+bypass) before it receives any signing secret.
 
-```bash
-git tag v1.1.0 && git push origin v1.1.0
-```
+`.github/workflows/release.yml` runs on GitHub's `xcode-27` runner (Xcode 27.2). It refuses a
+version that isn't `MAJOR.MINOR[.PATCH]`, already exists, or isn't above the highest `v*` tag; runs
+`make build test`; archives the app signed with Developer ID; notarizes and staples it; signs the
+zip for Sparkle and writes `appcast.xml`; writes release notes; and creates a **draft** release with
+both files. The version input sets `MARKETING_VERSION`, the workflow run number the app's build
+number (`CURRENT_PROJECT_VERSION`), the extension's own history its version (above; the checkout
+fetches the full history for it). Installed apps replace the extension only when that number changes.
+
+The reviewer reads the draft's notes, edits them if needed and clicks **Publish release**. Only then
+does the `v<version>` tag exist (on the commit the run built) and do installed apps see the update.
+A failed run leaves nothing behind; a draft nobody wants can simply be deleted.
+
+**Release notes** come from GitHub Copilot: the workflow gives GitHub's generated notes (merged PRs
+since the previous version) and the commit subjects to the Copilot CLI (pinned in the workflow, no
+tools allowed) with a light model, `claude-haiku-5.5` unless the `RELEASE_NOTES_MODEL` variable says
+otherwise (e.g. `gpt-6-luna`). It needs `COPILOT_GITHUB_TOKEN` in the `release` environment: a
+fine-grained personal access token of someone with a Copilot plan, with the **Copilot Requests**
+permission. Without it, or if Copilot fails (quota, unknown model), the draft gets GitHub's generated
+notes instead.
 
 ### Updates
 
@@ -125,29 +138,32 @@ Each update is signed with an EdDSA key on top of Apple's signature. The public 
 of the 32-byte Ed25519 seed, the format of Sparkle's `generate_keys -x`). Keep a copy in a password
 manager: without it no installed copy can be updated again, short of a manual reinstall.
 
-One-time setup (Apple Developer Program account holder or admin):
+One-time setup (Apple Developer Program account holder):
 
-1. **Developer ID Application certificate.** Xcode → Settings → Accounts → Manage Certificates → + →
-   Developer ID Application. Export it with its private key from Keychain Access as a `.p12` with a
-   password.
+1. **Developer ID Application certificate.** Certificates, Identifiers & Profiles → Certificates → +
+   → Developer ID Application (G2 Sub-CA), from a certificate signing request. Keep the private key:
+   the `.p12` needs the certificate and its key (`openssl pkcs12 -export` builds one from both).
 2. **Developer ID provisioning profile for the app** (the extension needs none). In Certificates,
    Identifiers & Profiles → Profiles → +, pick Developer ID (macOS), the app ID `APP_BUNDLE_ID`
    (registered with the System Extension capability by the first `make app`) and the certificate
    from step 1. Download it.
-3. **Notarization key.** App Store Connect → Users and Access → Integrations → Team Keys → +
-   (Developer access is enough). Download the `.p8` (only possible once) and note the key ID and
-   issuer ID.
-4. **Repository secrets and variable** (the workflow names any that are missing):
+3. **Notarization key.** App Store Connect → Users and Access → Integrations → App Store Connect
+   API → Team Keys → + (Developer access is enough). Download the `.p8` (only possible once) and
+   note the key ID and the issuer ID shown above the keys.
+4. **The `release` environment** (Settings → Environments): required reviewers, "Prevent self-review",
+   and deployments limited to `main`. Its secrets and variable (the workflow names any that are missing):
 
    ```bash
-   gh variable set DEVELOPMENT_TEAM --body XXXXXXXXXX   # team ID: the certificate's OU
-   base64 -i DeveloperID.p12 | gh secret set DEVELOPER_ID_CERTIFICATE_P12
-   gh secret set DEVELOPER_ID_CERTIFICATE_PASSWORD
-   base64 -i Mirrorup_Developer_ID.provisionprofile | gh secret set APP_PROVISIONING_PROFILE
-   base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set NOTARY_API_KEY
-   gh secret set NOTARY_API_KEY_ID
-   gh secret set NOTARY_API_ISSUER_ID
-   gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle-private-key.txt   # see "Updates" above
+   E="--env release"
+   gh variable set DEVELOPMENT_TEAM $E --body XXXXXXXXXX   # team ID: the certificate's OU
+   base64 -i DeveloperID.p12 | gh secret set DEVELOPER_ID_CERTIFICATE_P12 $E
+   gh secret set DEVELOPER_ID_CERTIFICATE_PASSWORD $E
+   base64 -i Mirrorup_Developer_ID.provisionprofile | gh secret set APP_PROVISIONING_PROFILE $E
+   base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set NOTARY_API_KEY $E
+   gh secret set NOTARY_API_KEY_ID $E
+   gh secret set NOTARY_API_ISSUER_ID $E
+   gh secret set SPARKLE_ED_PRIVATE_KEY $E < sparkle-private-key.txt   # see "Updates" above
+   gh secret set COPILOT_GITHUB_TOKEN $E                               # optional: release notes
    ```
 
 The workflow signs manually: it passes the profile's name as `MIRRORUP_APP_PROFILE`, which the app
