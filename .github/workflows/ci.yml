@@ -1,11 +1,14 @@
 # Builds and tests every pull request and every push to main on the same runner as releases, so a
-# failure shows up on the PR instead of in the release run.
+# failure shows up on the PR instead of in the release run. Releases require this check ("test") to
+# have passed on the commit they build; "Run workflow" re-tests main when a push's run was cancelled
+# or failed on a flake.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

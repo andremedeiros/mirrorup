@@ -102,13 +102,20 @@ xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 ## Releases
 
 Releases are made on GitHub, never from a laptop. Actions → **Release** → **Run workflow** (branch
-`main`) → enter the version (`1.1.0`). Anyone with write access can start a run; it then waits for a
+`main`) → enter the version (`1.1.0`). Anyone with write access can start a run.
+
+The run first requires that CI (`ci.yml`, check `test`) passed on the exact commit it builds; the
+release doesn't run the tests again. It waits while CI is still running and refuses a commit whose
+run failed, was cancelled (a newer push supersedes it) or never ran (merged with admin bypass):
+Actions → **CI** → **Run workflow** on `main` (or re-run its last run), then start the release
+again. `main`'s ruleset alone doesn't guarantee a tested commit: admins can bypass it, PRs are
+tested separately, and a newer push cancels the previous run. Only then does the run wait for a
 reviewer of the `release` environment (André or Dana; nobody approves their own run, admins can
 bypass) before it receives any signing secret.
 
-`.github/workflows/release.yml` runs on GitHub's `xcode-27` runner (Xcode 27.2). It refuses a
-version that isn't `MAJOR.MINOR[.PATCH]`, already exists, or isn't above the highest `v*` tag; runs
-`make build test`; archives the app signed with Developer ID; notarizes and staples it; signs the
+`.github/workflows/release.yml` builds on GitHub's `xcode-27` runner (Xcode 27.2). It refuses a
+version that isn't `MAJOR.MINOR[.PATCH]`, already exists, or isn't above the highest `v*` tag;
+archives the app signed with Developer ID; notarizes and staples it; signs the
 zip for Sparkle and writes `appcast.xml`; writes release notes; and creates a **draft** release with
 both files. The version input sets `MARKETING_VERSION`, the workflow run number the app's build
 number (`CURRENT_PROJECT_VERSION`), the extension's own history its version (above; the checkout
