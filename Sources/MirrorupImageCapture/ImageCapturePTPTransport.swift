@@ -85,11 +85,18 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     /// Waits for the complete catalog, bounded by `readyTimeout` and by cancellation (the capture
     /// engine's connect deadline stays in charge); either way it carries on and lets the command
     /// deadlines decide. Returns how long it waited and whether the catalog completed.
-    private func waitForContentCatalog() async -> (waited: Duration, complete: Bool) {
+    ///
+    /// While it waits it reports `.indexingStorage` through `preparation` (with
+    /// `contentCatalogPercentCompleted`, observed), then `nil` when the wait ends however it ends.
+    /// When the catalog is already complete it reports nothing.
+    private func waitForContentCatalog(
+        preparation: @escaping PTPPreparationHandler
+    ) async -> (waited: Duration, complete: Bool) {
         let start = ContinuousClock.now
         let timeout = readyTimeout
         let camera = UncheckedBox(camera)
         let wait = CatalogWait()
+        let reporter = PreparationReporter(preparation)
         let timer = Task {
             do { try await Task.sleep(for: timeout) } catch { return }
             wait.finish(false)
@@ -98,8 +105,13 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         Task { @MainActor in
             if delegate.isReady || camera.value.contentCatalogPercentCompleted >= 100 {
                 wait.finish(true)
-            } else {
+            } else if !reporter.isFinished {
+                // `isFinished`: the wait may already be over (cancelled) by the time this runs.
+                reporter.report(percent: camera.value.contentCatalogPercentCompleted)
                 delegate.onReady = { wait.finish(true) }
+                delegate.catalogObservation = camera.value.observe(\.contentCatalogPercentCompleted) { device, _ in
+                    reporter.report(percent: device.contentCatalogPercentCompleted)
+                }
             }
         }
         let complete = await withTaskCancellationHandler {
@@ -107,8 +119,47 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         } onCancel: {
             wait.finish(false)
         }
-        await MainActor.run { delegate.onReady = nil }
+        reporter.finish()
+        await MainActor.run {
+            delegate.onReady = nil
+            delegate.catalogObservation = nil
+        }
         return (ContinuousClock.now - start, complete)
+    }
+
+    /// Forwards catalog progress to a preparation handler: only changes, nothing after `finish()`,
+    /// and the closing `nil` only if something was reported.
+    private final class PreparationReporter: Sendable {
+        private struct State {
+            var lastPercent: Int?
+            var reported = false
+            var finished = false
+        }
+        private let state = Mutex(State())
+        private let handler: PTPPreparationHandler
+
+        init(_ handler: @escaping PTPPreparationHandler) { self.handler = handler }
+
+        var isFinished: Bool { state.withLock { $0.finished } }
+
+        func report(percent: Int) {
+            let percent = min(max(percent, 0), 100)
+            let send = state.withLock { s -> Bool in
+                guard !s.finished, !s.reported || s.lastPercent != percent else { return false }
+                s.reported = true
+                s.lastPercent = percent
+                return true
+            }
+            if send { handler(.indexingStorage(percentComplete: percent)) }
+        }
+
+        func finish() {
+            let send = state.withLock { s -> Bool in
+                defer { s.finished = true }
+                return s.reported && !s.finished
+            }
+            if send { handler(nil) }
+        }
     }
 
     /// One-shot result for `waitForContentCatalog`; the first `finish` wins, before or after `install`.
@@ -146,6 +197,10 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     }
 
     public func open() async throws(PTPTransportError) {
+        try await open(preparation: { _ in })
+    }
+
+    public func open(preparation: @escaping PTPPreparationHandler) async throws(PTPTransportError) {
         let result: Result<Void, PTPTransportError> = await withCheckedContinuation { cont in
             let once = Mutex<CheckedContinuation<Result<Void, PTPTransportError>, Never>?>(cont)
             let finish: @Sendable (Result<Void, PTPTransportError>) -> Void = { r in
@@ -178,8 +233,15 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
             $0.phase = .open
             $0.removalToken = token
         }
-        let (waited, complete) = await waitForContentCatalog()
+        let (waited, complete) = await waitForContentCatalog(preparation: preparation)
         if case .failed(let error) = state.withLock({ $0.phase }) { throw error }
+        if Task.isCancelled {
+            // Stopped while waiting (e.g. the app quit during the catalog): not "continuing". Close
+            // here so a caller that never got an open transport has nothing to clean up.
+            Diagnostics.imageCapture.info("ImageCaptureCore content catalog wait cancelled after \(waited, privacy: .public)")
+            await close()
+            throw .cancelled
+        }
         if complete {
             Diagnostics.imageCapture.info("ImageCaptureCore session open on \(self.cameraNameForLogs, privacy: .public) (content catalog ready after \(waited, privacy: .public))")
         } else {
@@ -324,6 +386,8 @@ final class CameraDelegate: NSObject, ICCameraDeviceDelegate {
     /// Set once ImageCaptureCore reports the content catalog complete for this session.
     private(set) var isReady = false
     var onReady: (@MainActor () -> Void)?
+    /// Observes `contentCatalogPercentCompleted` while a catalog wait is in progress.
+    var catalogObservation: NSKeyValueObservation?
 
     nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
         MainActor.assumeIsolated { onSessionClosed?() }

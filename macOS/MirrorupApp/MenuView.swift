@@ -181,6 +181,19 @@ private struct PreviewPlaceholder: View {
             case .connecting:
                 ProgressView().controlSize(.small)
                 Text("Connecting to camera…")
+            case .preparing(let preparation):
+                if let percent = preparation.displayedPercent {
+                    ProgressView(value: Double(percent), total: 100).frame(maxWidth: 160)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                Text(preparation.summary)
+                Text(preparation.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
             case .reconnecting(let reason):
                 ProgressView().controlSize(.small)
                 Text("Reconnecting…")
@@ -324,6 +337,7 @@ private extension AppModel.Phase {
         switch self {
         case .off: "Streaming is off"
         case .connecting: "Connecting…"
+        case .preparing(let preparation): preparation.summary
         case .live: "Streaming"
         case .reconnecting: "Reconnecting…"
         case .unavailable: "Camera unavailable"

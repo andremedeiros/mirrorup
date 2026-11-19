@@ -91,10 +91,17 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 - A camera can be on USB but not in ImageCaptureCore: the SL2 stayed that way for minutes after a
   USB dropout (until power-cycled). Switching the SL2 off with its power switch removes it from USB
   entirely (2026-11-17).
-- ptpcamerad answers PTP pass-through only after cataloguing the card. On a cold attach a 7D with
-  479 files took 10–24 s after `requestOpenSession`; commands sent earlier time out. The transport
-  waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded, cancellable, so the
-  engine's 10 s connect deadline still wins; the app reconnects until the catalog is done).
+- ptpcamerad answers PTP pass-through only after cataloguing the card. A 7D with 479 files took
+  10–24 s after `requestOpenSession`, and not only on a cold attach: every new process pays it
+  again (23.8 s, 23.9 s on an attached, powered 7D), while later sessions in the same process are
+  ready at once. `contentCatalogPercentCompleted` sits at 0 for ~9.5 s, then counts 1→100 in ~150 ms
+  steps (KVO works). Commands sent earlier time out. The transport
+  waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded at 60 s, cancellable) and
+  reports it as `PTPPreparation.indexingStorage`; the engine shows `.preparing(.readingStorage)`
+  and swaps the 10 s connect deadline for `preparationTimeout` (90 s) meanwhile, so a cold start
+  connects in one session instead of timing out and reconnecting. Every surface that shows this
+  wait (popover, CLI, docs) also shows `CameraPreparation.explanation`: users read "memory card"
+  as the app reading their photos, and Mirrorup copies none (only a Take Photo shot).
 - A cancelled pass-through request must not fail the session: a capture stop lands during a
   frame poll often (3 of 5 stops on a 7D), and teardown still has to restore `0xD1B0` and leave remote mode.
 - System extensions activate only from `/Applications`, and the user must approve them in

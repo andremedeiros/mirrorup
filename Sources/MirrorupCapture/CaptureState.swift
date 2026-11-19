@@ -83,22 +83,64 @@ public struct CaptureConfiguration: Sendable {
     public var stallTimeout: Duration
     /// Deadline for `connect`, `startLiveView` and `stopLiveView`.
     public var operationTimeout: Duration
+    /// How long a camera may stay `.preparing` (counted from its first report) before the connect
+    /// attempt times out. Replaces `operationTimeout` while the camera prepares; once it is done,
+    /// the rest of the connect gets a fresh `operationTimeout`.
+    public var preparationTimeout: Duration
 
     public init(
         output: VideoFormat = .virtualCamera,
         pixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         recovery: RecoveryPolicy = .init(),
         stallTimeout: Duration = .seconds(5),
-        operationTimeout: Duration = .seconds(10)
+        operationTimeout: Duration = .seconds(10),
+        preparationTimeout: Duration = .seconds(90)
     ) {
         precondition(output.width > 0 && output.height > 0 && output.width % 2 == 0 && output.height % 2 == 0,
                      "Output dimensions must be positive and even")
-        precondition(stallTimeout > .zero && operationTimeout > .zero, "Timeouts must be positive")
+        precondition(stallTimeout > .zero && operationTimeout > .zero && preparationTimeout > .zero,
+                     "Timeouts must be positive")
         self.output = output
         self.pixelFormat = pixelFormat
         self.recovery = recovery
         self.stallTimeout = stallTimeout
         self.operationTimeout = operationTimeout
+        self.preparationTimeout = preparationTimeout
+    }
+}
+
+/// Why a connected camera cannot be used yet, though nothing is wrong. Reported by backends while
+/// they connect (`CameraBackend.connect(progress:)`).
+public enum CameraPreparation: Sendable, Equatable {
+    /// The camera, or the system's camera service, is indexing the camera's storage (memory card).
+    /// `percentComplete` (0...100) is nil when unknown.
+    case readingStorage(percentComplete: Int?)
+}
+
+extension CameraPreparation {
+    /// Progress worth showing, or nil for an indeterminate indicator. A 7D's catalog sits at 0 %
+    /// for ~9.5 s before it counts, so 0 reads as "unknown" rather than as a stuck bar.
+    public var displayedPercent: Int? {
+        switch self {
+        case .readingStorage(let percent?) where percent > 0: percent
+        case .readingStorage: nil
+        }
+    }
+
+    /// One-line status, e.g. "The camera is getting ready (45%)…".
+    public var summary: String {
+        displayedPercent.map { "The camera is getting ready (\($0)%)…" } ?? "The camera is getting ready…"
+    }
+
+    /// What is going on, and what is not: show it with `summary` wherever the wait is visible.
+    /// Mirrorup itself reads no files during this wait; the only file it ever copies is a photo the
+    /// user takes with Take Photo.
+    public var explanation: String {
+        switch self {
+        case .readingStorage:
+            "macOS lists the files on the camera's memory card before any app can use the camera, "
+                + "which takes longer the more photos there are. Mirrorup doesn't copy or upload your photos."
+        }
     }
 }
 
@@ -108,6 +150,9 @@ public enum CaptureState: Sendable, Equatable {
     /// Creating the backend (finding the camera).
     case discovering
     case connecting
+    /// Connecting, but the camera is busy and cannot take commands yet (no failure: the connect
+    /// deadline is `preparationTimeout` meanwhile). Back to `.connecting` when it is done.
+    case preparing(CameraPreparation)
     /// Connected; entering live view.
     case initializing
     /// Live view running; waiting for the first frame.
@@ -157,6 +202,10 @@ public struct CaptureStatus: Sendable, Equatable {
 enum CaptureEvent: Sendable, Equatable {
     case start
     case backendCreated
+    /// The backend reported that the camera is preparing, or reported new progress.
+    case preparing(CameraPreparation)
+    /// The backend reported that the camera finished preparing.
+    case preparationFinished
     case connected
     case liveViewStarted
     case framePublished
@@ -204,7 +253,11 @@ struct CaptureStateMachine: Sendable, Equatable {
 
         case (.discovering, .backendCreated):
             return (.connecting, false)
-        case (.connecting, .connected):
+        case (.connecting, .preparing(let preparation)), (.preparing, .preparing(let preparation)):
+            return (.preparing(preparation), false)
+        case (.preparing, .preparationFinished):
+            return (.connecting, false)
+        case (.connecting, .connected), (.preparing, .connected):
             return (.initializing, false)
         case (.initializing, .liveViewStarted):
             return (.ready, false)
@@ -219,7 +272,8 @@ struct CaptureStateMachine: Sendable, Equatable {
         case (.recovering, .retry):
             return (.discovering, false)
 
-        case (.discovering, .failed(let error)), (.connecting, .failed(let error)), (.initializing, .failed(let error)),
+        case (.discovering, .failed(let error)), (.connecting, .failed(let error)), (.preparing, .failed(let error)),
+             (.initializing, .failed(let error)),
              (.ready, .failed(let error)), (.streaming, .failed(let error)):
             return failure(error)
 

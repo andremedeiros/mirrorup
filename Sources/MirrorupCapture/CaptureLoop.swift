@@ -1,4 +1,5 @@
 import MirrorupDiagnostics
+import Synchronization
 
 /// One capture run: discover -> connect -> live view -> frames, with recovery between sessions.
 /// Runs off the engine actor so decoding never blocks status queries or `stop()`.
@@ -50,8 +51,21 @@ struct CaptureLoop: Sendable {
             core.setBackend(backend, generation: generation)
             core.apply(.backendCreated, generation: generation)
 
-            try await withDeadline(after: configuration.operationTimeout, "connect") { () throws(CameraError) in
-                try await backend.connect()
+            // A camera that reports it is preparing (e.g. its card is being indexed, 10-24 s on a 7D
+            // with 479 files) gets `preparationTimeout` instead of failing the connect deadline.
+            let deadline = ConnectDeadline(operationTimeout: configuration.operationTimeout,
+                                           preparationTimeout: configuration.preparationTimeout)
+            let core = core, generation = generation
+            try await withDeadline(deadline, "connect") { () throws(CameraError) in
+                try await backend.connect { preparation in
+                    if let preparation {
+                        deadline.preparing(preparation)
+                        core.apply(.preparing(preparation), generation: generation)
+                    } else {
+                        deadline.preparationFinished()
+                        core.apply(.preparationFinished, generation: generation)
+                    }
+                }
             }
             core.apply(.connected, generation: generation)
             // Backends can name the camera more precisely once connected.
@@ -162,6 +176,29 @@ func withDeadline<T: Sendable>(
     _ body: @escaping @Sendable () async throws(CameraError) -> T,
     timeoutError: @Sendable () -> CameraError = { CameraError(.timeout, "The camera did not respond in time.") }
 ) async throws(CameraError) -> T {
+    try await race(operation, body, timeoutError: timeoutError) {
+        try await Task.sleep(until: deadline, clock: .continuous)
+    }
+}
+
+/// Runs a connect `body` against a deadline that moves while the camera prepares.
+func withDeadline<T: Sendable>(
+    _ deadline: ConnectDeadline,
+    _ operation: String,
+    _ body: @escaping @Sendable () async throws(CameraError) -> T
+) async throws(CameraError) -> T {
+    try await race(operation, body, timeoutError: { deadline.timeoutError() }) {
+        try await deadline.sleepUntilPassed()
+    }
+}
+
+/// Races `body` against `sleep`, which returns when time is up and throws when cancelled.
+private func race<T: Sendable>(
+    _ operation: String,
+    _ body: @escaping @Sendable () async throws(CameraError) -> T,
+    timeoutError: @Sendable () -> CameraError,
+    sleep: @escaping @Sendable () async throws -> Void
+) async throws(CameraError) -> T {
     let outcome = await withTaskGroup(of: DeadlineOutcome<T>.self) { group -> DeadlineOutcome<T> in
         group.addTask {
             do throws(CameraError) {
@@ -172,7 +209,7 @@ func withDeadline<T: Sendable>(
         }
         group.addTask {
             do {
-                try await Task.sleep(until: deadline, clock: .continuous)
+                try await sleep()
                 return .timedOut
             } catch {
                 return .cancelled
@@ -201,4 +238,72 @@ func withDeadline<T: Sendable>(
     _ body: @escaping @Sendable () async throws(CameraError) -> T
 ) async throws(CameraError) -> T {
     try await withDeadline(.now + timeout, operation, body)
+}
+
+/// The deadline of one connect attempt: `operationTimeout` from creation; while the backend reports
+/// the camera preparing, `preparationTimeout` from its first report; once the preparation is over, a
+/// fresh `operationTimeout` for the rest of the connect.
+final class ConnectDeadline: Sendable {
+    /// How often a sleeper re-reads a deadline that may have moved earlier.
+    static let recheckInterval: Duration = .milliseconds(250)
+
+    private struct State {
+        var instant: ContinuousClock.Instant
+        var preparingSince: ContinuousClock.Instant?
+        /// The latest report while preparing; nil when not preparing.
+        var preparation: CameraPreparation?
+    }
+
+    let operationTimeout: Duration
+    let preparationTimeout: Duration
+    private let state: Mutex<State>
+
+    init(operationTimeout: Duration, preparationTimeout: Duration, now: ContinuousClock.Instant = .now) {
+        self.operationTimeout = operationTimeout
+        self.preparationTimeout = preparationTimeout
+        state = Mutex(State(instant: now + operationTimeout))
+    }
+
+    var instant: ContinuousClock.Instant { state.withLock { $0.instant } }
+
+    /// The camera is preparing (first report or progress).
+    func preparing(_ preparation: CameraPreparation, now: ContinuousClock.Instant = .now) {
+        state.withLock { s in
+            let since = s.preparingSince ?? now
+            s.preparingSince = since
+            s.preparation = preparation
+            s.instant = since + preparationTimeout
+        }
+    }
+
+    /// The camera finished preparing; the rest of the connect gets a fresh `operationTimeout`.
+    func preparationFinished(now: ContinuousClock.Instant = .now) {
+        state.withLock { s in
+            guard s.preparation != nil else { return }
+            s.preparation = nil
+            s.instant = now + operationTimeout
+        }
+    }
+
+    /// Returns once the (current) deadline has passed; throws when cancelled.
+    func sleepUntilPassed() async throws {
+        while true {
+            let now = ContinuousClock.now
+            let target = instant
+            if now >= target { return }
+            try await Task.sleep(until: min(target, now + Self.recheckInterval), clock: .continuous)
+        }
+    }
+
+    func timeoutError() -> CameraError {
+        state.withLock { s in
+            switch s.preparation {
+            case .readingStorage:
+                CameraError(.timeout, "The camera took too long to get ready: macOS was still listing the files on its memory card.",
+                            detail: "preparation exceeded \(preparationTimeout)")
+            case nil:
+                CameraError(.timeout, "The camera did not respond in time.")
+            }
+        }
+    }
 }

@@ -8,6 +8,8 @@ struct CaptureStateMachineTests {
     static let fatalError = CameraError(.accessDenied, "Denied")
     static let invalidError = CameraError(.invalidFrame, "Bad frame")
     static let cancelledError = CameraError(.cancelled, "Cancelled")
+    static let reading = CameraPreparation.readingStorage(percentComplete: 10)
+    static let preparing = CaptureState.preparing(reading)
 
     /// A machine driven along the happy path up to `state`.
     static func machine(at state: CaptureState, maxAttempts: Int? = nil) -> CaptureStateMachine {
@@ -16,6 +18,7 @@ struct CaptureStateMachineTests {
         case .idle: []
         case .discovering: [.start]
         case .connecting: [.start, .backendCreated]
+        case .preparing(let preparation): [.start, .backendCreated, .preparing(preparation)]
         case .initializing: [.start, .backendCreated, .connected]
         case .ready: [.start, .backendCreated, .connected, .liveViewStarted]
         case .streaming: [.start, .backendCreated, .connected, .liveViewStarted, .framePublished]
@@ -28,7 +31,7 @@ struct CaptureStateMachineTests {
     }
 
     static let allStates: [CaptureState] = [
-        .idle, .discovering, .connecting, .initializing, .ready, .streaming,
+        .idle, .discovering, .connecting, preparing, .initializing, .ready, .streaming,
         .recovering(attempt: 1, reason: reconnectError.message), .failed(fatalError),
     ]
 
@@ -62,7 +65,7 @@ struct CaptureStateMachineTests {
         #expect(machine.consecutiveFailures == 0)
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing, .ready, .streaming, .recovering(attempt: 1, reason: "")])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing, .ready, .streaming, .recovering(attempt: 1, reason: "")])
     func startIsIgnoredWhileActive(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         let before = machine.state
@@ -70,7 +73,7 @@ struct CaptureStateMachineTests {
         #expect(machine.state == before)
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing, .ready, .streaming])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing, .ready, .streaming])
     func reconnectFailureEntersRecovering(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         let transition = machine.handle(.failed(Self.reconnectError))
@@ -78,19 +81,19 @@ struct CaptureStateMachineTests {
         #expect(machine.consecutiveFailures == 1)
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing, .ready, .streaming])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing, .ready, .streaming])
     func absentDeviceEntersRecovering(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         #expect(machine.handle(.failed(Self.absentError))?.to == .recovering(attempt: 1, reason: Self.absentError.message))
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing, .ready, .streaming])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing, .ready, .streaming])
     func fatalFailureFails(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         #expect(machine.handle(.failed(Self.fatalError))?.to == .failed(Self.fatalError))
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing, .ready, .streaming])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing, .ready, .streaming])
     func cancelledFailureGoesIdle(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         #expect(machine.handle(.failed(Self.cancelledError))?.to == .idle)
@@ -105,10 +108,62 @@ struct CaptureStateMachineTests {
         #expect(machine.consecutiveFailures == 0)
     }
 
-    @Test(arguments: [CaptureState.discovering, .connecting, .initializing])
+    @Test(arguments: [CaptureState.discovering, .connecting, preparing, .initializing])
     func invalidFrameOutsideLiveViewReconnects(_ state: CaptureState) {
         var machine = Self.machine(at: state)
         #expect(machine.handle(.failed(Self.invalidError))?.to == .recovering(attempt: 1, reason: Self.invalidError.message))
+    }
+
+    @Test func preparingWhileConnecting() {
+        var machine = CaptureStateMachine()
+        let later = CameraPreparation.readingStorage(percentComplete: 60)
+        let expected: [(CaptureEvent, CaptureState)] = [
+            (.start, .discovering), (.backendCreated, .connecting),
+            (.preparing(Self.reading), Self.preparing), (.preparing(later), .preparing(later)),
+            (.preparationFinished, .connecting), (.connected, .initializing),
+        ]
+        var previous = machine.state
+        for (event, state) in expected {
+            #expect(machine.handle(event) == .init(from: previous, to: state, completedRecovery: false))
+            previous = state
+        }
+    }
+
+    @Test func connectedEndsAPreparationThatWasNotReportedOver() {
+        var machine = Self.machine(at: Self.preparing)
+        #expect(machine.handle(.connected)?.to == .initializing)
+    }
+
+    @Test func preparingIsNotAFailure() {
+        var machine = Self.machine(at: .ready)
+        _ = machine.handle(.failed(Self.reconnectError))
+        _ = machine.handle(.retry)
+        _ = machine.handle(.backendCreated)
+        #expect(machine.handle(.preparing(Self.reading))?.to == Self.preparing)
+        #expect(machine.consecutiveFailures == 1, "preparing neither adds nor clears failures")
+        _ = machine.handle(.preparationFinished)
+        _ = machine.handle(.connected)
+        _ = machine.handle(.liveViewStarted)
+        #expect(machine.handle(.framePublished)?.completedRecovery == true)
+    }
+
+    @Test(arguments: [CaptureState.idle, .discovering, .initializing, .ready, .streaming,
+                      .recovering(attempt: 1, reason: ""), .failed(fatalError)])
+    func preparingOnlyWhileConnecting(_ state: CaptureState) {
+        var machine = Self.machine(at: state)
+        let before = machine
+        #expect(machine.handle(.preparing(Self.reading)) == nil)
+        #expect(machine.handle(.preparationFinished) == nil)
+        #expect(machine == before)
+    }
+
+    @Test func preparationTextHidesAStuckZeroAndSaysPhotosAreNotCopied() {
+        #expect(CameraPreparation.readingStorage(percentComplete: nil).displayedPercent == nil)
+        #expect(CameraPreparation.readingStorage(percentComplete: 0).displayedPercent == nil)
+        #expect(CameraPreparation.readingStorage(percentComplete: 45).displayedPercent == 45)
+        #expect(CameraPreparation.readingStorage(percentComplete: 0).summary == "The camera is getting ready…")
+        #expect(CameraPreparation.readingStorage(percentComplete: 45).summary == "The camera is getting ready (45%)…")
+        #expect(Self.reading.explanation.contains("Mirrorup doesn't copy or upload your photos."))
     }
 
     @Test func retryLeavesRecoveringForDiscovering() {
@@ -152,12 +207,14 @@ struct CaptureStateMachineTests {
     }
 
     @Test func invalidEventsAreRejected() {
-        let reconnectError = Self.reconnectError, fatalError = Self.fatalError
+        let reconnectError = Self.reconnectError, fatalError = Self.fatalError, preparing = Self.preparing
         let cases: [(CaptureState, CaptureEvent)] = [
             (.idle, .backendCreated), (.idle, .connected), (.idle, .liveViewStarted), (.idle, .framePublished),
             (.idle, .failed(reconnectError)), (.idle, .retry),
             (.discovering, .connected), (.discovering, .framePublished), (.discovering, .retry),
             (.connecting, .backendCreated), (.connecting, .liveViewStarted), (.connecting, .retry),
+            (.connecting, .preparationFinished),
+            (preparing, .backendCreated), (preparing, .liveViewStarted), (preparing, .framePublished), (preparing, .retry),
             (.initializing, .framePublished), (.initializing, .retry),
             (.ready, .connected), (.ready, .retry),
             (.streaming, .liveViewStarted), (.streaming, .retry),

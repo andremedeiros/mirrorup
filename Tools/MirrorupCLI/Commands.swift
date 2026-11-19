@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import ImageIO
 import MirrorupCameras
 import MirrorupCapture
@@ -99,7 +100,7 @@ enum Commands {
     /// GetDeviceInfo over a bare PTP session: works for any PTP camera a driver claims.
     static func deviceInfo(_ camera: DiscoveredCamera) async throws -> PTPDeviceInfo {
         let session = try await camera.openPTPSession()
-        try await session.open()
+        try await session.open(preparation: PreparationNotice.ptp)
         let info: PTPDeviceInfo
         do {
             info = try await session.deviceInfo()
@@ -161,7 +162,7 @@ enum Commands {
         }
         let (camera, driver) = try await findCamera(transport)
         let session = try await camera.openPTPSession()
-        try await session.open()
+        try await session.open(preparation: PreparationNotice.ptp)
         let deviceInfoData: Data
         do {
             deviceInfoData = try await session.execute(PTPCommand(.getDeviceInfo)).data
@@ -175,7 +176,7 @@ enum Commands {
         var payloads = ["deviceinfo": deviceInfoData]
         let backend = try await driver.makeBackend(for: camera)
         do {
-            try await backend.connect()
+            try await backend.connect(progress: PreparationNotice.camera)
             try await backend.startLiveView()
             _ = try await backend.nextFrame()
             if let recorder = backend as? any RawPayloadRecording {
@@ -229,7 +230,7 @@ enum Commands {
         let camera = try await openCamera(transport)
         let metadata: CameraMetadata
         do {
-            try await camera.connect()
+            try await camera.connect(progress: PreparationNotice.camera)
             metadata = await camera.metadata()
             await camera.disconnect()
         } catch {
@@ -270,7 +271,7 @@ enum Commands {
     static func snapshot(output: String, transport: CameraTransport) async throws {
         let camera = try await openCamera(transport)
         do {
-            try await camera.connect()
+            try await camera.connect(progress: PreparationNotice.camera)
             try await camera.startLiveView()
             let frame = try await camera.nextFrame()
             // Ask before stopping live view: the frame section describes the latest frame.
@@ -299,4 +300,19 @@ func jpegDimensions(_ jpeg: Data) -> (width: Int, height: Int)? {
           let w = props[kCGImagePropertyPixelWidth] as? Int, let h = props[kCGImagePropertyPixelHeight] as? Int
     else { return nil }
     return (w, h)
+}
+
+/// Tells the user, once per process on stderr, why a command is waiting before the camera answers
+/// (macOS cataloguing the card can take tens of seconds) and that Mirrorup is not copying photos.
+enum PreparationNotice {
+    private static let shown = Mutex(false)
+
+    static let camera: @Sendable (CameraPreparation?) -> Void = { preparation in
+        guard let preparation, shown.withLock({ let was = $0; $0 = true; return !was }) else { return }
+        FileHandle.standardError.write(Data("\(preparation.summary)\n\(preparation.explanation)\n".utf8))
+    }
+
+    static let ptp: PTPPreparationHandler = { preparation in
+        camera(preparation.map(CameraPreparation.init(ptp:)))
+    }
 }

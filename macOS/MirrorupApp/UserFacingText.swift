@@ -9,6 +9,7 @@ enum UserFacingText {
         case .idle: "Stopped"
         case .discovering: "Looking for the camera…"
         case .connecting: "Connecting to the camera…"
+        case let .preparing(preparation): preparation.summary
         case .initializing: "Starting live view…"
         case .ready: "Camera ready"
         case .streaming: "Streaming"
