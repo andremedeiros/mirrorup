@@ -84,7 +84,8 @@ Optional capabilities, discovered with `as?`:
   real backend through `PTPSession`: init sequence, live view start/stop, frame parsing, controls,
   error mapping.
 - Real captures as fixtures (`DeviceInfo`, a live-view payload, a GetEvent dump), named after the body
-  and firmware.
+  and firmware. Adopt `RawPayloadRecording` in your backend (keys are your fixture name stems) and
+  `mirrorup ptp dump --body <name>` writes them, with the serial number zeroed.
 - `docs/<maker>-ptp.md`: operations, payloads and sequences, each marked verified-on-hardware or
   referenced (with source).
 - Hardware runs: `mirrorup devices` shows your driver, `mirrorup liveview benchmark --json

@@ -16,6 +16,12 @@ let usage = """
                                       including codes no public source documents)
       ptp info                        open a PTP session and print parsed GetDeviceInfo
       ptp operations                  list operations, events, properties and formats by name
+      ptp dump --body NAME --output-dir D [--keep-serial]
+                                      start live view once and save the raw data phases the
+                                      driver's tests use as fixtures (deviceinfo-NAME.bin, plus
+                                      the driver's own, e.g. getevent-initial-NAME.bin and
+                                      evf-NAME.bin); the serial number is zeroed unless
+                                      --keep-serial
       liveview snapshot --output F    save one live-view JPEG frame to F and its metadata to F.json
       liveview benchmark [--duration S] [--no-decode] [--enhance] [--json F]
                                       stream live view for S seconds (default 60) and report
@@ -43,7 +49,7 @@ struct Arguments {
             let a = args[i]
             if a.hasPrefix("--") {
                 let name = String(a.dropFirst(2))
-                if ["no-decode", "enhance", "help"].contains(name) {
+                if ["no-decode", "enhance", "keep-serial", "help"].contains(name) {
                     flags.insert(name)
                 } else {
                     guard i + 1 < args.count else { throw CLIError("missing value for \(a)") }
@@ -80,6 +86,12 @@ enum MirrorupCLI {
             case ("camera", "info"): try await Commands.cameraInfo(jsonPath: args.options["json"], transport: args.transport())
             case ("ptp", "info"): try await Commands.ptpInfo(transport: args.transport())
             case ("ptp", "operations"): try await Commands.ptpOperations(transport: args.transport())
+            case ("ptp", "dump"):
+                guard let body = args.options["body"], let dir = args.options["output-dir"] else {
+                    throw CLIError("dump needs --body <name> and --output-dir <dir>")
+                }
+                try await Commands.ptpDump(body: body, outputDir: dir, keepSerial: args.flags.contains("keep-serial"),
+                                           transport: args.transport())
             case ("liveview", "snapshot"):
                 guard let output = args.options["output"] else { throw CLIError("snapshot needs --output <file.jpg>") }
                 try await Commands.snapshot(output: output, transport: args.transport())

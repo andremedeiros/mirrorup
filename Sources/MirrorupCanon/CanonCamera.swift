@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 public import MirrorupPTP
 public import MirrorupCapture
 import MirrorupDevices
@@ -6,7 +6,7 @@ import MirrorupDiagnostics
 
 /// Canon EOS live-view backend. Owns the PTP session and all Canon-specific state; serializes
 /// device access by being an actor (and through `PTPSession`'s transaction gate).
-public actor CanonCamera: CameraBackend, LiveViewPolling {
+public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
     public struct Options: Sendable {
         /// Pause between GetViewfinderData polls while the camera answers "not ready".
         public var notReadyRetryInterval: Duration = .milliseconds(3)
@@ -74,6 +74,10 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
     private var epoch: UInt64 = 0
     /// GetViewfinderData accounting for benchmarks and diagnostics.
     public private(set) var pollStatistics = LiveViewPollStatistics()
+    /// The first GetEvent data phase ("getevent-initial") and the latest GetViewfinderData payload
+    /// ("evf"), as received, for `mirrorup ptp dump`. Bounded: one of each; the EVF buffer is the
+    /// one `latestFrame` already references.
+    public private(set) var rawPayloads: [String: Data] = [:]
 
     public init(session: PTPSession, identity: CameraIdentity, options: Options = Options()) {
         self.session = session
@@ -218,11 +222,17 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
             return
         }
         // Hand the camera back to local control. Short timeouts: the camera may already be gone.
-        for (op, param) in [(CanonOperation.setEventMode, UInt32(0)), (CanonOperation.setRemoteMode, UInt32(0))] {
+        // The final SetRemoteMode(1) is libgphoto2's "switch the display back on" step for every
+        // regular EOS body: without it a 7D stays "Busy" (MENU refused) after PC live view
+        // (docs §9.4, §12).
+        let handBack: [(PTPOperationCode, UInt32)] = [
+            (CanonOperation.setEventMode, 0), (CanonOperation.setRemoteMode, 0), (CanonOperation.setRemoteMode, 1),
+        ]
+        for (op, param) in handBack {
             do {
                 try await session.execute(PTPCommand(op, [param]), timeout: .seconds(1))
             } catch {
-                Diagnostics.canon.notice("\(op.description, privacy: .public)(0) during disconnect failed: \(error.description, privacy: .public)")
+                Diagnostics.canon.notice("\(op.description, privacy: .public)(\(param)) during disconnect failed: \(error.description, privacy: .public)")
                 if error.transportError != nil { break }
             }
         }
@@ -340,6 +350,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
                     rearmedSinceLastFrame = false
                     pollStatistics.frames += 1
                     pollStatistics.payloadBytes += result.data.count
+                    rawPayloads["evf"] = result.data
                     lastFrameTime = .now
                     latestFrame = parsed
                     return CameraFrame(sequence: sequence, jpeg: parsed.jpeg, acquisitionStart: start, acquisitionEnd: end,
@@ -347,8 +358,16 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
                 case CanonResponse.objectNotReady, .deviceBusy:
                     pollStatistics.notReady += 1
                     if ContinuousClock.now - lastFrameTime > options.frameTimeout {
-                        throw CameraError(.timeout, "The camera stopped sending live view.",
-                                          detail: "no frame for \(options.frameTimeout); last response \(CanonResponse.describe(result.response.code))")
+                        let detail = "no frame for \(options.frameTimeout); last response \(CanonResponse.describe(result.response.code))"
+                        // The 7D in movie mode acknowledges EVFOutputDevice = PC but never echoes it
+                        // and never serves a frame (docs §12). The SL2 streams in movie mode and
+                        // echoes the write, so all three conditions must hold.
+                        let pcConfirmed = (properties[CanonProperty.evfOutputDevice]?.integer ?? 0) & CanonProperty.evfOutputPC != 0
+                        if sequence == 0, isInMovieMode, !pcConfirmed {
+                            throw CameraError(.liveViewUnavailable, Self.movieModeLiveViewMessage,
+                                              detail: "\(detail); FixedMovie 0xD1C2 = 1")
+                        }
+                        throw CameraError(.timeout, "The camera stopped sending live view.", detail: detail)
                     }
                     try await Task.sleep(for: options.notReadyRetryInterval)
                 default:
@@ -405,6 +424,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
     func drainEvents() async throws(PTPError) {
         for _ in 0..<50 {
             let result = try await session.execute(PTPCommand(CanonOperation.getEvent), timeout: options.commandTimeout)
+            if rawPayloads["getevent-initial"] == nil { rawPayloads["getevent-initial"] = result.data }
             let events = try CanonEventParser.parse(result.data)
             if events.isEmpty { return }
             properties.apply(events)
@@ -427,6 +447,10 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
         }
         Diagnostics.canon.notice("GetEvent drain hit its iteration bound")
     }
+
+    /// Movie mode is the Live View/Movie switch on bodies that have one (7D), the power switch on others.
+    static let movieModeLiveViewMessage =
+        "The camera is in movie mode and isn't sending live view. Set its Live View/Movie switch (or power switch) to the stills position."
 
     static func validate(_ info: PTPDeviceInfo) throws(CameraError) {
         // Canon bodies report either Canon's or Microsoft's vendor extension ID (the SL2 reports

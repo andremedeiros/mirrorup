@@ -1,0 +1,19 @@
+benchmarking Canon EOS 7D via ImageCaptureCore for 60.0 seconds (decode: on, enhance: off)
+     10s     298 frames   29.8 fps  acq p50 13.6 ms
+     20s     598 frames   29.9 fps  acq p50 13.6 ms
+     30s     898 frames   29.9 fps  acq p50 13.4 ms
+     40s    1198 frames   29.9 fps  acq p50 13.4 ms
+     50s    1498 frames   29.9 fps  acq p50 13.4 ms
+
+camera              Canon EOS 7D via ImageCaptureCore
+source frames       1056x704 JPEG, mean 219 KiB
+streamed            60.0 s, 1795 frames, 29.89 fps measured
+first frame         1399 ms after live view start
+viewfinder polls    5115 (3320 not ready, 65%), 0 invalid payloads
+acquisition         n=1795 min=10.30 p50=13.41 p95=24.65 p99=28.23 max=34.92 mean=14.59 ms
+inter-frame         n=1794 min=12.52 p50=33.41 p95=40.51 p99=47.31 max=136.22 mean=33.46 ms
+decode+scale        n=1795 min=1.49 p50=2.16 p95=3.50 p99=10.69 max=125.16 mean=2.48 ms
+capture->decoded    n=1795 min=1.52 p50=2.21 p95=3.59 p99=10.71 max=125.27 mean=2.52 ms
+CPU                 4.5% of one core (whole process)
+memory              9.9 MB peak physical footprint
+wrote benchmarks/7d-fw203-60s-imagecapture.json

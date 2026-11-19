@@ -151,6 +151,78 @@ enum Commands {
         show("Image formats", info.imageFormats, name: names.objectFormat)
     }
 
+    /// Saves raw data phases as test fixtures: GetDeviceInfo (standard PTP, fetched here) plus whatever
+    /// the backend recorded while connecting and delivering one live-view frame (`RawPayloadRecording`).
+    /// The device's serial number is overwritten with '0's of the same length (ASCII and UTF-16LE,
+    /// wherever it appears) unless `keepSerial`, so fixtures can be published.
+    static func ptpDump(body: String, outputDir: String, keepSerial: Bool, transport: CameraTransport) async throws {
+        guard !body.isEmpty, body.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else {
+            throw CLIError("--body must be letters, digits and dashes (e.g. 7d or sl2-fw110)")
+        }
+        let (camera, driver) = try await findCamera(transport)
+        let session = try await camera.openPTPSession()
+        try await session.open()
+        let deviceInfoData: Data
+        do {
+            deviceInfoData = try await session.execute(PTPCommand(.getDeviceInfo)).data
+        } catch {
+            await session.close()
+            throw error
+        }
+        await session.close()
+        let info = try PTPDeviceInfo(decoding: deviceInfoData)
+
+        var payloads = ["deviceinfo": deviceInfoData]
+        let backend = try await driver.makeBackend(for: camera)
+        do {
+            try await backend.connect()
+            try await backend.startLiveView()
+            _ = try await backend.nextFrame()
+            if let recorder = backend as? any RawPayloadRecording {
+                payloads.merge(await recorder.rawPayloads) { standard, _ in standard }
+            }
+            try await backend.stopLiveView()
+            await backend.disconnect()
+        } catch {
+            await backend.disconnect()
+            throw error
+        }
+
+        let directory = URL(fileURLWithPath: outputDir, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        print("\(info.model) (\(info.deviceVersion)), driver \(driver.id)")
+        for (stem, data) in payloads.sorted(by: { $0.key < $1.key }) {
+            var out = data
+            var note = ""
+            if !keepSerial {
+                let count = redact(info.serialNumber, in: &out)
+                note = count == 0 ? "" : "  (serial zeroed in \(count) place\(count == 1 ? "" : "s"))"
+            }
+            let url = directory.appendingPathComponent("\(stem)-\(body).bin")
+            try out.write(to: url)
+            print("  \(url.path)  \(out.count) bytes\(note)")
+        }
+    }
+
+    /// Overwrites every ASCII and UTF-16LE occurrence of `secret` with '0' characters of the same
+    /// length, so offsets and lengths in the payload stay valid. Returns the number replaced.
+    static func redact(_ secret: String, in data: inout Data) -> Int {
+        guard !secret.isEmpty else { return 0 }
+        let ascii = Data(secret.utf8)
+        let utf16 = Data(secret.utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] })
+        var count = 0
+        for (needle, zero) in [(utf16, Data([0x30, 0x00])), (ascii, Data([0x30]))] {
+            let replacement = Data(Array(repeating: zero, count: needle.count / zero.count).joined())
+            var start = data.startIndex
+            while let range = data.range(of: needle, in: start..<data.endIndex) {
+                data.replaceSubrange(range, with: replacement)
+                start = range.upperBound
+                count += 1
+            }
+        }
+        return count
+    }
+
     /// Connects (remote mode + event drain, which reports every property), prints the decoded
     /// metadata grouped by section, and leaves the camera in local mode again.
     static func cameraInfo(jsonPath: String?, transport: CameraTransport) async throws {

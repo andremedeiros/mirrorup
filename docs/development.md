@@ -181,3 +181,8 @@ restart; video apps that were open may need reopening.
 `Tests/*/Fixtures/*-sl2.bin` are raw data phases captured from the real SL2 via ImageCaptureCore
 pass-through (`GetDeviceInfo`, the first `GetEvent` after SetEventMode(1), and one
 `GetViewfinderData` payload). They contain the camera's serial number and nothing else personal.
+
+`mirrorup ptp dump --body <name> --output-dir <dir>` captures the same set from any attached body
+(the `-7d` fixtures came from it). It overwrites the serial number with zeros of the same length
+wherever it appears (`--keep-serial` to keep it). The EVF payload is a real picture of whatever the
+camera sees, so point it at a blank wall first.

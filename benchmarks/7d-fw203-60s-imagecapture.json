@@ -1,0 +1,56 @@
+{
+  "acquisitionMs" : {
+    "count" : 1795,
+    "max" : 34.920875,
+    "mean" : 14.587316845682471,
+    "min" : 10.2955,
+    "p50" : 13.412708,
+    "p95" : 24.650833,
+    "p99" : 28.231125
+  },
+  "cameraFPS" : 29.885244638125748,
+  "captureToDecodedMs" : {
+    "count" : 1795,
+    "max" : 125.274208,
+    "mean" : 2.522187867966574,
+    "min" : 1.516791,
+    "p50" : 2.210291,
+    "p95" : 3.591458,
+    "p99" : 10.707291
+  },
+  "cpuPercentOfOneCore" : 4.512608456212375,
+  "decodeMs" : {
+    "count" : 1795,
+    "max" : 125.155916,
+    "mean" : 2.4786848116991584,
+    "min" : 1.49325,
+    "p50" : 2.162625,
+    "p95" : 3.501416,
+    "p99" : 10.689
+  },
+  "durationSeconds" : 60.029624041000005,
+  "enhanced" : false,
+  "errors" : [
+
+  ],
+  "frames" : 1795,
+  "interFrameMs" : {
+    "count" : 1794,
+    "max" : 136.224625,
+    "mean" : 33.460413730769204,
+    "min" : 12.523208,
+    "p50" : 33.406833,
+    "p95" : 40.505583,
+    "p99" : 47.310333
+  },
+  "invalidFrames" : 0,
+  "meanFrameBytes" : 224315,
+  "model" : "Canon EOS 7D",
+  "notReadyResponses" : 3320,
+  "peakFootprintMB" : 9.906959533691406,
+  "sourceHeight" : 704,
+  "sourceWidth" : 1056,
+  "timeToFirstFrameMs" : 1399.44775,
+  "transport" : "ImageCaptureCore",
+  "viewfinderRequests" : 5115
+}
