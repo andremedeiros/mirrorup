@@ -35,6 +35,7 @@ jobs:
           NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
@@ -44,7 +45,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           missing=()
           for name in DEVELOPMENT_TEAM DEVELOPER_ID_CERTIFICATE_P12 DEVELOPER_ID_CERTIFICATE_PASSWORD \
-            APP_PROVISIONING_PROFILE NOTARY_API_KEY NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID; do
+            APP_PROVISIONING_PROFILE NOTARY_API_KEY NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID SPARKLE_ED_PRIVATE_KEY; do
             [[ -n "${!name}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} )); then
@@ -148,15 +149,70 @@ jobs:
           spctl --assess --type execute --verbose=2 "$app"
           ditto -c -k --keepParent "$app" "Mirrorup-${{ steps.version.outputs.version }}.zip"
 
+      - name: Sign the update and write the appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_VERSION: 2.10.1
+          SPARKLE_SHA256: 1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: |
+          # Sparkle's sign_update, from the release matching the app's Sparkle package (project.yml).
+          tools="$RUNNER_TEMP/sparkle"
+          mkdir -p "$tools"
+          curl -sSfL -o "$tools/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          echo "$SPARKLE_SHA256  $tools/sparkle.tar.xz" | shasum -a 256 -c -
+          tar -xf "$tools/sparkle.tar.xz" -C "$tools"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          zip="Mirrorup-$VERSION.zip"
+          signature=$("$tools/bin/sign_update" --ed-key-file "$RUNNER_TEMP/sparkle.key" -p "$zip")
+          length=$(stat -f %z "$zip")
+          minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$RUNNER_TEMP/export/Mirrorup.app/Contents/Info.plist")
+          # One item, this release: the app's SUFeedURL resolves to the latest release's appcast.
+          # Sparkle compares sparkle:version with CFBundleVersion, the workflow run number.
+          python3 - "$zip" "$signature" "$length" "$minimum" <<'PY'
+          import os, sys
+          from email.utils import formatdate
+          from xml.sax.saxutils import escape, quoteattr
+          zip, signature, length, minimum = sys.argv[1:]
+          repo, tag = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_REF_NAME"]
+          version, build = os.environ["VERSION"], os.environ["BUILD"]
+          url = f"https://github.com/{repo}/releases/download/{tag}/{zip}"
+          notes = f"https://github.com/{repo}/releases/tag/{tag}"
+          xml = f"""<?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Mirrorup</title>
+              <item>
+                <title>{escape(f"Mirrorup {version}")}</title>
+                <pubDate>{formatdate(usegmt=True)}</pubDate>
+                <sparkle:version>{escape(build)}</sparkle:version>
+                <sparkle:shortVersionString>{escape(version)}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>{escape(minimum)}</sparkle:minimumSystemVersion>
+                <sparkle:fullReleaseNotesLink>{escape(notes)}</sparkle:fullReleaseNotesLink>
+                <enclosure url={quoteattr(url)} length={quoteattr(length)} type="application/octet-stream"
+                           sparkle:edSignature={quoteattr(signature)}/>
+              </item>
+            </channel>
+          </rss>
+          """
+          open("appcast.xml", "w").write(xml)
+          PY
+          cat appcast.xml
+          # Fail the release rather than publish an update installed apps would reject.
+          "$tools/bin/sign_update" --verify "$zip" "$signature" --ed-key-file "$RUNNER_TEMP/sparkle.key"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "Mirrorup-${{ steps.version.outputs.version }}.zip" \
-            --verify-tag --title "Mirrorup ${{ steps.version.outputs.version }}" --generate-notes
+          # --latest: installed apps read the appcast of the latest release; never mark one a pre-release.
+          gh release create "$GITHUB_REF_NAME" "Mirrorup-${{ steps.version.outputs.version }}.zip" appcast.xml \
+            --verify-tag --latest --title "Mirrorup ${{ steps.version.outputs.version }}" --generate-notes
 
       - name: Remove signing material
         if: always()
         run: |
           [[ -n "${KEYCHAIN:-}" ]] && security delete-keychain "$KEYCHAIN" || true
-          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP"/*.provisionprofile "$RUNNER_TEMP"/*.plist
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP"/*.provisionprofile "$RUNNER_TEMP"/*.plist

@@ -11,7 +11,7 @@ struct MirrorupApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuView(model: appDelegate.model)
+            MenuView(model: appDelegate.model, updater: appDelegate.updater)
         } label: {
             MenuBarLabel(glyph: appDelegate.model.menuBarIcon.glyph)
                 .accessibilityLabel("Mirrorup")
@@ -38,11 +38,12 @@ struct MirrorupApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    let updater = Updater()
     private var isShuttingDown = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
-        PopoverSnapshot.scheduleIfRequested(model: model)
+        PopoverSnapshot.scheduleIfRequested(model: model, updater: updater)
         #endif
     }
 

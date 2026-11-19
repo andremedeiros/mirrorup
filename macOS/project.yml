@@ -29,6 +29,11 @@ settings:
     MARKETING_VERSION: "0.1.0"
     # The app's build number; the release workflow overrides it with the run number.
     CURRENT_PROJECT_VERSION: "13"
+    # Sparkle update feed: the appcast the release workflow attaches to every release. GitHub
+    # redirects `latest/download` to the newest release that isn't a pre-release.
+    UPDATE_FEED_URL: https://github.com/andremedeiros/mirrorup/releases/latest/download/appcast.xml
+    # Sparkle's EdDSA public key; the private key is the SPARKLE_ED_PRIVATE_KEY repository secret.
+    UPDATE_PUBLIC_KEY: 85oTQl02lEDdb1xo/vm7i0N4LL2xm34Mis3SDqAgs6o=
     # The Camera Extension's own build number, from macOS/extension-version.sh (via the Makefile):
     # it changes only when the extension's sources do, so app-only updates never replace it.
     EXTENSION_VERSION: ${EXTENSION_VERSION}
@@ -36,6 +41,10 @@ settings:
 packages:
   Mirrorup:
     path: ..
+  # The app's only third-party dependency (AGENTS.md): updates. Not used by the package or the extension.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 
 targets:
   Mirrorup:
@@ -54,6 +63,8 @@ targets:
         product: MirrorupCameras
       - package: Mirrorup
         product: MirrorupDiagnostics
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_NAME: Mirrorup
@@ -78,6 +89,10 @@ targets:
         NSHumanReadableCopyright: Mirrorup is not affiliated with any camera manufacturer.
         # Read by ExtensionManager so the identifier is defined once, here.
         MirrorupCameraExtensionBundleIdentifier: $(EXTENSION_BUNDLE_ID)
+        SUFeedURL: $(UPDATE_FEED_URL)
+        SUPublicEDKey: $(UPDATE_PUBLIC_KEY)
+        # Check daily without first asking; installing an update always needs the user's click.
+        SUEnableAutomaticChecks: true
     entitlements:
       path: MirrorupApp/Mirrorup.entitlements
       properties:

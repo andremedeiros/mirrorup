@@ -7,6 +7,7 @@ import SwiftUI
 /// user, and a single ⋯ menu for everything else.
 struct MenuView: View {
     @Bindable var model: AppModel
+    let updater: Updater
     @State private var refreshedOnce = false
 
     var body: some View {
@@ -28,7 +29,8 @@ struct MenuView: View {
                 AttentionView(attention: attention, extensionManager: model.extensionManager, dismiss: model.dismissNotice)
             }
             Divider()
-            MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable, name: model.virtualCameraName))
+            MenuFooter(status: MenuFooter.Status(attention: attention, isAvailable: model.isVirtualCameraAvailable, name: model.virtualCameraName),
+                       updater: updater)
         }
         .padding(14)
         .frame(width: 340)
@@ -464,6 +466,7 @@ private struct MenuFooter: View {
     }
 
     let status: Status?
+    let updater: Updater
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -493,6 +496,12 @@ private struct MenuFooter: View {
                     NSApp.activate()
                 }
                 .keyboardShortcut(",")
+                Button("Check for Updates…") {
+                    updater.checkForUpdates()
+                    // Sparkle's window belongs to a menu-bar app that isn't frontmost.
+                    NSApp.activate()
+                }
+                .disabled(!updater.canCheckForUpdates)
                 Divider()
                 Button("Quit Mirrorup") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
