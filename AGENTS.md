@@ -29,6 +29,9 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 - No third-party dependencies, no libgphoto2/Rust/C transport code, no private Apple API. One
   exception: the app target links Sparkle (pinned in `macOS/project.yml`) for updates; the Swift
   package, the CLI and the Camera Extension stay dependency-free.
+- Release signing keys live only in the `release` environment. In `release.yml`, nothing from outside
+  this repository (Homebrew, npm, package resolution) runs after "Install signing certificate and
+  profile"; actions and Sparkle are pinned to commit hashes (Dependabot moves the action pins).
 - Vendor opcodes, wording and quirks stay in the driver module (`MirrorupCanon`, …); `MirrorupPTP`,
   `MirrorupCapture`, `MirrorupDevices`, the app and the CLI contain no vendor logic and no vendor
   wording shown to users (doc comments may cite makers as examples). Backends phrase

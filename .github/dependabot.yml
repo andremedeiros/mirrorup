@@ -1,0 +1,8 @@
+# Keeps the workflows' actions current. They're pinned to commit hashes (the repository requires it);
+# Dependabot opens a PR that moves the hash and its version comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

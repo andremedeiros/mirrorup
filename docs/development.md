@@ -118,6 +118,18 @@ The reviewer reads the draft's notes, edits them if needed and clicks **Publish 
 does the `v<version>` tag exist (on the commit the run built) and do installed apps see the update.
 A failed run leaves nothing behind; a draft nobody wants can simply be deleted.
 
+**Protecting the signing keys.** Whoever can change what runs on `main` can make an approved release
+leak the keys, so:
+- The "Protect main" ruleset requires a PR with the CI check (`test`) passing and one approving
+  review, plus a code-owner review (`.github/CODEOWNERS`) for the workflows, `Makefile`,
+  `Package.swift`, `macOS/project.yml` and `macOS/*.sh`. It blocks force-pushes and deletion; repo
+  admins can bypass it.
+- Actions are limited to GitHub's own and pinned to commit hashes (Dependabot opens PRs to move
+  them); Sparkle is pinned to a commit in `project.yml`. CI on PRs from outside contributors waits
+  for approval and never gets secrets.
+- In `release.yml`, everything that runs outside code (XcodeGen from Homebrew, package resolution,
+  the Copilot CLI from npm) runs before the keys are installed; the archive doesn't resolve packages.
+
 **Release notes** come from GitHub Copilot: the workflow gives GitHub's generated notes (merged PRs
 since the previous version) and the commit subjects to the Copilot CLI (pinned in the workflow, no
 tools allowed) with a light model, `claude-haiku-5.5` unless the `RELEASE_NOTES_MODEL` variable says

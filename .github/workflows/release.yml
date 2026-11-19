@@ -35,7 +35,7 @@ jobs:
       TAG: v${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # macOS/extension-version.sh counts commits; a shallow clone would undercount.
           fetch-depth: 0
@@ -87,6 +87,57 @@ jobs:
       - name: Build and test
         run: make build test
 
+      # Everything that runs code from outside this repository (XcodeGen from Homebrew, Swift package
+      # resolution, the Copilot CLI from npm) runs before the signing keys are installed.
+      - name: Generate the Xcode project and fetch packages
+        run: |
+          make project
+          xcodebuild -resolvePackageDependencies -project macOS/Mirrorup.xcodeproj -scheme Mirrorup
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Write release notes
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'claude-haiku-5.5' }}
+          COPILOT_CLI_VERSION: 1.0.114
+        run: |
+          # GitHub's generated notes (merged PRs since the previous version) are the fallback and the
+          # model's input; a reviewer reads and edits the result before publishing the draft.
+          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
+          [[ -n "$PREVIOUS" ]] && args+=(-f previous_tag_name="$PREVIOUS")
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" -q .body > generated.md
+          cp generated.md notes.md
+          # GitHub's notes stand if Copilot fails (quota, unknown model).
+          range=${PREVIOUS:+$PREVIOUS..}HEAD
+          {
+            echo "Write the release notes for Mirrorup $VERSION, a macOS menu-bar app that turns a USB camera"
+            echo "into a webcam. Readers are users deciding whether to update, not developers."
+            echo "- Markdown only, no preamble or closing remarks. Start with one sentence summarising the release."
+            echo "- Then short bullets grouped under '### New', '### Fixed' and '### Changed' (omit empty groups)."
+            echo "- Describe what users notice, in plain words; leave out refactors, tests, CI and docs-only changes."
+            echo "- Name supported cameras as the changes do; never invent features, cameras or numbers."
+            echo "- End with the '**Full Changelog**' line from the generated notes, unchanged."
+            echo
+            echo "Generated notes (merged pull requests):"
+            cat generated.md
+            echo
+            echo "Commits:"
+            git log --no-merges --format='- %s' "$range"
+          } > prompt.md
+          npm install -g "@github/copilot@$COPILOT_CLI_VERSION" > /dev/null
+          # No --allow-tool: the model only reads the prompt and writes text.
+          if copilot -p "$(cat prompt.md)" -s --no-ask-user --no-auto-update --model "$MODEL" > copilot.md \
+            && [[ -s copilot.md ]]; then
+            mv copilot.md notes.md
+          else
+            echo "::warning::Copilot ($MODEL) failed; using GitHub's generated notes"
+          fi
+          cat notes.md
+
       - name: Install signing certificate and profile
         env:
           DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
@@ -125,9 +176,9 @@ jobs:
 
       - name: Archive
         run: |
-          make project
           xcodebuild archive \
             -project macOS/Mirrorup.xcodeproj -scheme Mirrorup -configuration Release \
+            -disableAutomaticPackageResolution \
             -archivePath "$RUNNER_TEMP/Mirrorup.xcarchive" \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" \
             MIRRORUP_APP_PROFILE="$APP_PROFILE" \
@@ -231,50 +282,6 @@ jobs:
           cat appcast.xml
           # Fail the release rather than publish an update installed apps would reject.
           "$tools/bin/sign_update" --verify "$zip" "$signature" --ed-key-file "$RUNNER_TEMP/sparkle.key"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Write release notes
-        env:
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          GITHUB_TOKEN: ${{ github.token }}
-          MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'claude-haiku-5.5' }}
-          COPILOT_CLI_VERSION: 1.0.114
-        run: |
-          # GitHub's generated notes (merged PRs since the previous version) are the fallback and the
-          # model's input; a reviewer reads and edits the result before publishing the draft.
-          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
-          [[ -n "$PREVIOUS" ]] && args+=(-f previous_tag_name="$PREVIOUS")
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" -q .body > generated.md
-          cp generated.md notes.md
-          # GitHub's notes stand if Copilot fails (quota, unknown model).
-          range=${PREVIOUS:+$PREVIOUS..}HEAD
-          {
-            echo "Write the release notes for Mirrorup $VERSION, a macOS menu-bar app that turns a USB camera"
-            echo "into a webcam. Readers are users deciding whether to update, not developers."
-            echo "- Markdown only, no preamble or closing remarks. Start with one sentence summarising the release."
-            echo "- Then short bullets grouped under '### New', '### Fixed' and '### Changed' (omit empty groups)."
-            echo "- Describe what users notice, in plain words; leave out refactors, tests, CI and docs-only changes."
-            echo "- Name supported cameras as the changes do; never invent features, cameras or numbers."
-            echo "- End with the '**Full Changelog**' line from the generated notes, unchanged."
-            echo
-            echo "Generated notes (merged pull requests):"
-            cat generated.md
-            echo
-            echo "Commits:"
-            git log --no-merges --format='- %s' "$range"
-          } > prompt.md
-          npm install -g "@github/copilot@$COPILOT_CLI_VERSION" > /dev/null
-          # No --allow-tool: the model only reads the prompt and writes text.
-          if copilot -p "$(cat prompt.md)" -s --no-ask-user --no-auto-update --model "$MODEL" > copilot.md \
-            && [[ -s copilot.md ]]; then
-            mv copilot.md notes.md
-          else
-            echo "::warning::Copilot ($MODEL) failed; using GitHub's generated notes"
-          fi
-          cat notes.md
 
       - name: Draft release
         run: |
