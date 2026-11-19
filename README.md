@@ -122,6 +122,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 | "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it, usually after a USB dropout left it stuck. Turn it off and on again. |
 | "The camera's USB connection dropped … times" | The cable, adapter or port is dropping the connection (macOS logs `hardware connection lost`). Try another cable, or plug the camera straight into the Mac. |
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
+| "The camera is in movie mode and isn't sending live view" | Move the camera's Live View/Movie switch (EOS 7D) or power switch to the stills position. Mirrorup reconnects by itself. |
 | "The camera can't start live view" | Set the mode dial to P/Av/Tv/M/Auto and close menus and playback on the camera. |
 | "Another app is using the camera" | Quit Photos, Image Capture, or the maker's utility (e.g. EOS Utility, EOS Webcam Utility). |
 | Mirrorup camera missing from apps | Check `systemextensionsctl list`. Approve the extension in System Settings. On managed Macs, ask IT to allowlist `cool.andre.Mirrorup.CameraExtension` (see docs/development.md). Right after an update, reopen the video app; if Mirrorup asks you to restart your Mac, do so (macOS 27.2 sometimes fails to start an updated camera extension). |

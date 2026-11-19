@@ -181,6 +181,28 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         #expect(ContinuousClock.now - start < .seconds(2))
     }
 
+    /// The 7D in movie mode: EVFOutputDevice = PC is acknowledged but never echoed, and
+    /// GetViewfinderData answers 0xA102 forever. (The SL2 fixture is already in movie mode, 0xD1C2 = 1.)
+    @Test func liveViewThatNeverStartsInMovieModeNamesTheSwitch() async throws {
+        var options = CanonCamera.Options()
+        options.frameTimeout = .milliseconds(150)
+        let (camera, sim) = try makeCamera(options: options)
+        try await camera.connect()
+        sim.state.withLock { s in
+            s.echoesPropertyWrites = false
+            s.neverReady = true
+        }
+        try await camera.startLiveView()
+        do {
+            _ = try await camera.nextFrame()
+            Issue.record("expected failure")
+        } catch {
+            #expect(error.kind == .liveViewUnavailable)
+            #expect(error.message.contains("Live View/Movie switch"))
+            #expect(error.detail?.contains("0xD1C2 = 1") == true)
+        }
+    }
+
     @Test func unexpectedViewfinderResponseIsLiveViewUnavailable() async throws {
         let (camera, sim) = try makeCamera()
         try await camera.connect()

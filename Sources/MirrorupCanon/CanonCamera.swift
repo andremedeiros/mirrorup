@@ -352,8 +352,16 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
                 case CanonResponse.objectNotReady, .deviceBusy:
                     pollStatistics.notReady += 1
                     if ContinuousClock.now - lastFrameTime > options.frameTimeout {
-                        throw CameraError(.timeout, "The camera stopped sending live view.",
-                                          detail: "no frame for \(options.frameTimeout); last response \(CanonResponse.describe(result.response.code))")
+                        let detail = "no frame for \(options.frameTimeout); last response \(CanonResponse.describe(result.response.code))"
+                        // The 7D in movie mode acknowledges EVFOutputDevice = PC but never echoes it
+                        // and never serves a frame (docs §12). The SL2 streams in movie mode and
+                        // echoes the write, so all three conditions must hold.
+                        let pcConfirmed = (properties[CanonProperty.evfOutputDevice]?.integer ?? 0) & CanonProperty.evfOutputPC != 0
+                        if sequence == 0, isInMovieMode, !pcConfirmed {
+                            throw CameraError(.liveViewUnavailable, Self.movieModeLiveViewMessage,
+                                              detail: "\(detail); FixedMovie 0xD1C2 = 1")
+                        }
+                        throw CameraError(.timeout, "The camera stopped sending live view.", detail: detail)
                     }
                     try await Task.sleep(for: options.notReadyRetryInterval)
                 default:
@@ -433,6 +441,10 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
         }
         Diagnostics.canon.notice("GetEvent drain hit its iteration bound")
     }
+
+    /// Movie mode is the Live View/Movie switch on bodies that have one (7D), the power switch on others.
+    static let movieModeLiveViewMessage =
+        "The camera is in movie mode and isn't sending live view. Set its Live View/Movie switch (or power switch) to the stills position."
 
     static func validate(_ info: PTPDeviceInfo) throws(CameraError) {
         // Canon bodies report either Canon's or Microsoft's vendor extension ID (the SL2 reports
