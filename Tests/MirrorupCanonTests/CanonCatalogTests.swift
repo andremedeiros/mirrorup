@@ -257,7 +257,7 @@ private func value(_ code: UInt32, _ v: UInt32) -> String {
     /// Every outline parses, belongs to a documented mode and stays inside its box: a mistyped
     /// coordinate would otherwise draw over the lens name or be cut off.
     @Test func everyOutlineIsAValidSymbolForADocumentedMode() throws {
-        #expect(CanonModeSymbols.outlines.count == 30)
+        #expect(CanonModeSymbols.outlines.count == 47)
         for (mode, outline) in CanonModeSymbols.outlines {
             #expect(CanonValueTables.exposureMode[mode] != nil, "0x\(String(mode, radix: 16)) is not a mode")
             let symbol = try #require(CanonModeSymbols.symbol(forExposureMode: mode), "0x\(String(mode, radix: 16))")
@@ -282,15 +282,18 @@ private func value(_ code: UInt32, _ v: UInt32) -> String {
         func symbol(_ mode: UInt32) -> CameraSymbol? {
             CanonCatalog.describe(property: 0xD138, value: .integer(mode)).symbol
         }
-        for mode: UInt32 in [0x00, 0x01, 0x02, 0x03, 0x16, 0x0F, 0x13, 0x19, 0x14] {
+        // SL2 dial modes, and modes only other bodies' manuals draw (Bulb, A-DEP, Fv, C1, Full Auto,
+        // Self Portrait, Hybrid Auto).
+        for mode: UInt32 in [0x00, 0x01, 0x02, 0x03, 0x16, 0x0F, 0x13, 0x19, 0x14, 0x04, 0x05, 0x37, 0x07, 0x09, 0x32, 0x33] {
             #expect(symbol(mode) != nil, "0x\(String(mode, radix: 16))")
         }
-        #expect(symbol(0x04) == nil)  // Bulb: no icon in the SL2 manual
-        #expect(symbol(0x37) == nil)  // Fv
+        #expect(symbol(0x06) == nil)  // DEP: no manual draws it
+        #expect(symbol(0x39) == nil)  // Fireworks
         #expect(symbol(0x16) != symbol(0x00))
-        // The dial prints only Scene Intelligent Auto in colour.
+        // The dials print only Scene Intelligent Auto and Full Auto in colour.
         #expect(symbol(0x16)?.tint == CanonModeSymbols.sceneIntelligentAutoGreen)
-        #expect(CanonModeSymbols.outlines.keys.filter { $0 != 0x16 }.allSatisfy {
+        #expect(symbol(0x09)?.tint == CanonModeSymbols.sceneIntelligentAutoGreen)
+        #expect(CanonModeSymbols.outlines.keys.filter { ![0x09, 0x16].contains($0) }.allSatisfy {
             CanonModeSymbols.symbol(forExposureMode: $0)?.tint == nil
         })
     }
