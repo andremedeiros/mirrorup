@@ -104,15 +104,23 @@ struct CaptureEngineTests {
             throw CameraError(.notFound, "No camera is connected.")
         }
         await engine.start()
-        try await Task.sleep(for: .milliseconds(600))
+        // Retries keep coming: 20 + 40 ms of backoff, waited for rather than slept, so a loaded
+        // machine (CI runners) can't fail it.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while factory.withLock({ $0 }) < 3, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let settled = factory.withLock { $0 }
+        #expect(settled >= 3, "\(settled) discovery attempts in 5 s")
+        // ...but never spin: at the 80 ms cap (64 ms with jitter) a 400 ms window fits at most ~7.
+        try await Task.sleep(for: .milliseconds(400))
         let status = await engine.status
         guard case .recovering = status.state else {
             Issue.record("expected recovering, got \(status.state)")
             return
         }
-        // 20 + 40 + 80 + 80 + ... ms: at most ~10 attempts in 600 ms, never hundreds.
         let attempts = factory.withLock { $0 }
-        #expect(attempts >= 3 && attempts <= 12, "\(attempts) discovery attempts")
+        #expect(attempts - settled <= 8, "\(attempts - settled) discovery attempts in 400 ms")
         #expect(status.metrics.recoveryAttempts == attempts)
         await engine.stop()
         #expect(await engine.status.state == .idle)

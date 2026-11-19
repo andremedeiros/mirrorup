@@ -67,6 +67,16 @@ private func decodeEnhanced(_ decoder: FrameDecoder, _ jpeg: Data, orientation: 
     }
 }
 
+/// Whether the scaler really enhances here. GitHub's macOS runners are virtual machines: they report
+/// `isEnhanceSupported`, but every frame fails (VTFrameProcessor -19730; the VM has no
+/// AppleM2ScalerParavirtDriver), and the decoder drops the scaler for plain scaling as designed.
+/// Tests of the enhanced picture need the real thing.
+private let enhanceWorksOnThisMac: Bool = {
+    guard FrameDecoder.isEnhanceSupported, let jpeg = try? croppedQuadrantsJPEG(width: 960, height: 640) else { return false }
+    let decoder = FrameDecoder(output: .virtualCamera)
+    return (try? decodeEnhanced(decoder, jpeg)) != nil && decoder.isEnhancing
+}()
+
 @Suite("Frame enhance")
 struct FrameEnhanceTests {
     @Test func outputAspectCropKeepsTheLargestEvenCentreCrop() {
@@ -81,7 +91,7 @@ struct FrameEnhanceTests {
 
     /// SL2 photo mode (3:2, cropped) and movie mode (16:9, not cropped): enhancing must keep the same
     /// framing, size, format and IOSurface backing as plain scaling.
-    @Test(.enabled(if: FrameDecoder.isEnhanceSupported), arguments: [(960, 640), (1024, 576)])
+    @Test(.enabled(if: enhanceWorksOnThisMac), arguments: [(960, 640), (1024, 576)])
     func enhancedFramesMatchPlainScalingFraming(_ size: (Int, Int)) throws {
         let jpeg = try croppedQuadrantsJPEG(width: size.0, height: size.1)
         let plain = try FrameDecoder(output: .virtualCamera).decode(frame(jpeg), sequence: 1).pixelBuffer
@@ -110,7 +120,7 @@ struct FrameEnhanceTests {
         #expect(luma(buffer, at: quadrantCentres[0]) > luma(buffer, at: quadrantCentres[3]))
     }
 
-    @Test(.enabled(if: FrameDecoder.isEnhanceSupported))
+    @Test(.enabled(if: enhanceWorksOnThisMac))
     func turningEnhanceOffReleasesTheStageAndOnRecreatesIt() throws {
         let jpeg = try croppedQuadrantsJPEG(width: 960, height: 640)
         let decoder = FrameDecoder(output: .virtualCamera)
@@ -129,7 +139,7 @@ struct FrameEnhanceTests {
         #expect(!decoder.isEnhancing)
     }
 
-    @Test(.enabled(if: FrameDecoder.isEnhanceSupported))
+    @Test(.enabled(if: enhanceWorksOnThisMac))
     func enhanceComposesWithOrientation() throws {
         let jpeg = try croppedQuadrantsJPEG(width: 960, height: 640)
         let decoder = FrameDecoder(output: .virtualCamera)
