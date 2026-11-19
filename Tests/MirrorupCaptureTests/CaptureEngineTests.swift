@@ -114,14 +114,14 @@ struct CaptureEngineTests {
         #expect(settled >= 3, "\(settled) discovery attempts in 5 s")
         // ...but never spin: at the 80 ms cap (64 ms with jitter) a 400 ms window fits at most ~7.
         try await Task.sleep(for: .milliseconds(400))
-        let status = await engine.status
-        guard case .recovering = status.state else {
-            Issue.record("expected recovering, got \(status.state)")
-            return
-        }
         let attempts = factory.withLock { $0 }
         #expect(attempts - settled <= 8, "\(attempts - settled) discovery attempts in 400 ms")
-        #expect(status.metrics.recoveryAttempts == attempts)
+        // The engine alternates between backing off and discovering; in a backoff, every attempt
+        // so far is counted as a recovery attempt.
+        try await waitForStatus(engine, "recovering, attempts counted") { status in
+            guard case .recovering = status.state else { return false }
+            return status.metrics.recoveryAttempts == factory.withLock { $0 }
+        }
         await engine.stop()
         #expect(await engine.status.state == .idle)
     }
@@ -174,7 +174,7 @@ struct CaptureEngineTests {
         #expect(status.lastRecoverableError?.kind == .timeout)
         #expect(await camera.connectCount >= 2)
         let duration = await elapsed { await engine.stop() }
-        #expect(duration < .seconds(2))
+        #expect(duration < promptStop)
     }
 
     @Test(arguments: [SyntheticCamera.InvalidFrames.Style.corruptData, .error])
@@ -247,7 +247,7 @@ struct CaptureEngineTests {
         try await waitForStatus(engine, "connecting") { $0.state == .connecting }
         try await Task.sleep(for: .milliseconds(20))
         let duration = await elapsed { await engine.stop() }
-        #expect(duration < .seconds(1), "stop took \(duration)")
+        #expect(duration < promptStop, "stop took \(duration)")
         #expect(await camera.disconnectCount == 1)
         #expect(await engine.status.state == .idle)
         #expect(await !engine.hasLoop)
@@ -262,7 +262,7 @@ struct CaptureEngineTests {
         try await waitForStatus(engine, "ready") { $0.state == .ready }
         try await waitUntil("frame requested") { await camera.frameRequests == 1 }
         let duration = await elapsed { await engine.stop() }
-        #expect(duration < .seconds(1), "stop took \(duration)")
+        #expect(duration < promptStop, "stop took \(duration)")
         #expect(await camera.disconnectCount == 1)
         #expect(await !camera.isLiveViewActive)
         #expect(await engine.status.state == .idle)
@@ -276,7 +276,7 @@ struct CaptureEngineTests {
         await engine.start()
         try await waitForStatus(engine, "recovering") { if case .recovering(1, _) = $0.state { true } else { false } }
         let duration = await elapsed { await engine.stop() }
-        #expect(duration < .seconds(1), "stop took \(duration)")
+        #expect(duration < promptStop, "stop took \(duration)")
         #expect(await camera.disconnectCount == 1, "the failed session was disconnected")
         #expect(await camera.connectAttempts == 1)
         #expect(await engine.status.state == .idle)
@@ -419,8 +419,10 @@ private actor PausingCamera: CameraBackend {
 @Suite(.timeLimit(.minutes(1)))
 struct FramePauseTests {
     @Test func aDeliberateFramePauseLongerThanTheStallTimeoutDoesNotReconnect() async throws {
-        let engine = CaptureEngine(configuration: testConfiguration(stallTimeout: .milliseconds(300))) {
-            PausingCamera(pause: .milliseconds(900))
+        // The camera gets one stall window to resume after a pause. Windows of seconds, not hundreds
+        // of milliseconds: a loaded CI runner can take that long to schedule the next frame.
+        let engine = CaptureEngine(configuration: testConfiguration(stallTimeout: .seconds(1))) {
+            PausingCamera(pause: .milliseconds(2_500))
         }
         await engine.start()
         _ = try await waitForStatus(engine, timeout: .seconds(10), "frames after the pause") {

@@ -114,8 +114,7 @@ struct SyntheticCameraTests {
         let camera = SyntheticCamera(configuration: syntheticConfiguration())
         await camera.simulateRemoval(reinsertAfter: .milliseconds(50))
         #expect(await camera.isRemoved)
-        try await Task.sleep(for: .milliseconds(80))
-        #expect(await !camera.isRemoved)
+        try await waitUntil("reinserted after 50 ms") { await !camera.isRemoved }
         try await camera.connect()
         await camera.disconnect()
     }

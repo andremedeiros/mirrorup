@@ -21,6 +21,7 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 | `macOS/` | SwiftUI menu-bar app + CoreMediaIO Camera Extension. `project.yml` (XcodeGen) is the only project definition; the `.xcodeproj`, Info.plists and entitlements are generated and untracked. `Shared/AppIcon.icon` (Icon Composer: SVG layers + `icon.json`, edit in Xcode's Icon Composer) is the icon of both targets; `docs/images/mirrorup-icon.png` is its 256 px render | package products |
 | `web/webcam-test.html` | Safari/WebRTC validation page | — |
 | `.github/workflows/release.yml` | Actions → Release → Run workflow (approved via the `release` environment) → test, Developer ID archive, notarize, Sparkle-signed appcast, Copilot-written notes, draft GitHub release (setup: `docs/development.md`) | — |
+| `.github/workflows/ci.yml` | every PR and push to `main` → `make build test` on the release runner | — |
 
 ## Hard constraints
 
