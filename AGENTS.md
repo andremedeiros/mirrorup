@@ -91,6 +91,12 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 - A camera can be on USB but not in ImageCaptureCore: the SL2 stayed that way for minutes after a
   USB dropout (until power-cycled). Switching the SL2 off with its power switch removes it from USB
   entirely (2026-11-17).
+- ptpcamerad answers PTP pass-through only after cataloguing the card. On a cold attach a 7D with
+  479 files took 10–24 s after `requestOpenSession`; commands sent earlier time out. The transport
+  waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded, cancellable, so the
+  engine's 10 s connect deadline still wins; the app reconnects until the catalog is done).
+- A cancelled pass-through request must not fail the session: a capture stop lands during a
+  frame poll often (3 of 5 stops on a 7D), and teardown still has to restore `0xD1B0` and leave remote mode.
 - System extensions activate only from `/Applications`, and the user must approve them in
   System Settings → General → Login Items & Extensions. MDM policies with `AllowUserOverrides = false`
   deny unlisted extensions outright (seen on a Kandji-managed Mac; error `forbiddenBySystemPolicy`).
