@@ -222,11 +222,17 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
             return
         }
         // Hand the camera back to local control. Short timeouts: the camera may already be gone.
-        for (op, param) in [(CanonOperation.setEventMode, UInt32(0)), (CanonOperation.setRemoteMode, UInt32(0))] {
+        // The final SetRemoteMode(1) is libgphoto2's "switch the display back on" step for every
+        // regular EOS body: without it a 7D stays "Busy" (MENU refused) after PC live view
+        // (docs §9.4, §12).
+        let handBack: [(PTPOperationCode, UInt32)] = [
+            (CanonOperation.setEventMode, 0), (CanonOperation.setRemoteMode, 0), (CanonOperation.setRemoteMode, 1),
+        ]
+        for (op, param) in handBack {
             do {
                 try await session.execute(PTPCommand(op, [param]), timeout: .seconds(1))
             } catch {
-                Diagnostics.canon.notice("\(op.description, privacy: .public)(0) during disconnect failed: \(error.description, privacy: .public)")
+                Diagnostics.canon.notice("\(op.description, privacy: .public)(\(param)) during disconnect failed: \(error.description, privacy: .public)")
                 if error.transportError != nil { break }
             }
         }

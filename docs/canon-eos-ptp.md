@@ -445,6 +445,9 @@ loop:
 5. **SetEventMode `0x9115`(0)**, then **SetRemoteMode `0x9114`(0)**. (**Verified**: both
    `0x2001`.) libgphoto2 then sends SetRemoteMode(1) to bring the rear display back (**Ref**). If
    the SL2's LCD stays dark after mode 0, add SetRemoteMode(1) as the final step. (**Hyp**)
+   Mirrorup now sends SetRemoteMode(1) last: after PC live view a 7D refused MENU ("Busy") until
+   it did, with `0xD1B0` restored to 1 or to 0 alike (§12). (**Verified** on the 7D; untested on
+   the SL2.)
 
 ## 10. Opcode summary (live view subset)
 
@@ -778,6 +781,10 @@ section **Verified** means observed on a 7D on 2026-11-19 (fixtures `*-7d.bin`, 
   payloads, 65% of polls `0xA102`, acquisition p50 13.4 ms, 4.5% CPU
   (`benchmarks/7d-fw203-60s-imagecapture.json`). **Verified**
 - The mode dial does not matter: live view streams on P and on full Auto. **Verified**
+- Leaving: with SetEventMode(0) and SetRemoteMode(0) as the last commands, the 7D refused MENU
+  ("Busy") after PC live view, with its rear screen dark, for at least 15 s, whether `0xD1B0` was
+  restored to 1 or to 0. A final SetRemoteMode(1), libgphoto2's display step (§3.3), gives the
+  buttons back; both libgphoto2's order and Mirrorup's (§9.4) work. **Verified**
 
 ### 12.1 EVF payload
 

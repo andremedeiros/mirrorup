@@ -155,7 +155,10 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         // InitiateViewfinder/TerminateViewfinder are not listed by the SL2 and must not be sent.
         #expect(!s.log.contains(0x9151) && !s.log.contains(0x9152))
         #expect(s.log.prefix(3) == [0x1001, 0x9114, 0x9115])
-        #expect(s.log.suffix(2) == [0x9115, 0x9114])
+        // Hand-back: SetEventMode(0), SetRemoteMode(0), then SetRemoteMode(1) to give the body its
+        // display and buttons back (without it a 7D stays "Busy").
+        let handBack = s.commands.suffix(3).map { "\(String($0.0, radix: 16))(\($0.1.first ?? 99))" }
+        #expect(handBack == ["9115(0)", "9114(0)", "9114(1)"])
     }
 
     @Test func notReadyResponsesAreRetriedUntilAFrameArrives() async throws {
