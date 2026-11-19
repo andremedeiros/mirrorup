@@ -2,7 +2,7 @@
 
 This file collects what Mirrorup needs to know to run live view on Canon EOS DSLRs over PTP,
 with the Rebel SL2 / 200D (USB `0x04A9:0x32CC`) as the target body. It is written from
-protocol knowledge. No code was copied from anywhere (see [Licensing](#12-licensing)).
+protocol knowledge. No code was copied from anywhere (see [Licensing](#13-licensing)).
 
 ## Provenance tags
 
@@ -10,9 +10,9 @@ Every claim carries one of these tags:
 
 | Tag | Meaning |
 |---|---|
-| **Verified** | Verified (SL2 hardware): observed on the real SL2 through ImageCaptureCore `requestSendPTPCommand` pass-through. |
+| **Verified** | Verified (SL2 hardware): observed on the real SL2 through ImageCaptureCore `requestSendPTPCommand` pass-through. In §12, observed on a real EOS 7D the same way. |
 | **Ref(`file`:`function`)** | Reference (libgphoto2 `camlibs/ptp2/<file>`:`<function>`, master as of 2026-11-16). For bare `#define` tables it reads **Ref(`ptp.h`)**. |
-| **Ext(source)** | Public reverse-engineering write-up, listed in [Sources](#13-sources). Not libgphoto2, and not seen on the SL2. |
+| **Ext(source)** | Public reverse-engineering write-up, listed in [Sources](#14-sources). Not libgphoto2, and not seen on the SL2. |
 | **Hyp** | Hypothesis. Not confirmed. Test it on hardware before relying on it. |
 
 Byte order is little-endian everywhere. "u32" means an unsigned 32-bit LE integer.
@@ -759,7 +759,56 @@ zoom centred lands at (2400, 1594) = the sensor centre.
   When `canCapturePhoto` is false, show `photoUnavailableReason`; on failure show the error's
   `message`.
 
-## 12. Licensing
+## 12. EOS 7D (`0x04A9:0x319A`, firmware 2.0.3)
+
+The stock driver streams the original 7D (2009, dual DIGIC 4) without 7D-specific code. In this
+section **Verified** means observed on a 7D on 2026-11-19 (fixtures `*-7d.bin`, captured with
+`mirrorup ptp dump --body 7d`, serial zeroed).
+
+- libgphoto2 lists `0x319A` as "Canon:EOS 7D" with `PTP_CAP|PTP_CAP_PREVIEW|PTPBUG_DELETE_SENDS_EVENT`.
+  **Ref(`library.c`:`models[]`)**
+- DeviceInfo: 493 bytes, "Canon EOS 7D", DeviceVersion `3-2.0.3`, vendor extension `0x6`
+  (Microsoft, like the SL2), 142 operations, 7 events and only 4 device properties: the EOS
+  properties arrive through GetEvent alone. InitiateViewfinder `0x9151` is not listed. **Verified**
+- The §9 sequence works unchanged: SetRemoteMode(1), SetEventMode(1), a first GetEvent of about
+  9–10 KB, then `0xD1B0` = 2 flips the mirror up and starts PC live view. At idle `0xD1B0` is 0
+  (optical viewfinder, mirror down), not 1 as on the SL2. The first frame arrives about 1.4 s
+  after the write. After stop, `0xD1B0` reads 0 again. **Verified**
+- Frames are 1056×704 baseline JPEGs (mean 219 KiB). 60 s benchmark: 29.89 fps, 0 invalid
+  payloads, 65% of polls `0xA102`, acquisition p50 13.4 ms, 4.5% CPU
+  (`benchmarks/7d-fw203-60s-imagecapture.json`). **Verified**
+- The mode dial does not matter: live view streams on P and on full Auto. **Verified**
+
+### 12.1 EVF payload
+
+Blocks arrive in the order `1, 4, 5, 6, 7, 3, 8, 0` (three captures). **Verified**
+
+| Type | 7D | Provenance |
+|---|---|---|
+| `0xFFFFFFFF` | Not sent: the 7D has no frame header block | **Verified** |
+| `0x1`, `0x4`, `0x5`, `0x7` | As on the SL2 (JPEG, magnification 1, magnifier origin, AF activity) | **Verified** |
+| `0x8` | One entry (4 + 24 bytes), the SL2's layout | Layout **Verified** |
+| `0x6` | 8 bytes, all zero in every capture. No source decodes it | **Verified** (presence only) |
+| `0x3` | 4096 bytes, the size of the SL2's `0x11` histogram, but read as 4 × 256 u32 planes its totals differ (301 124, 532 211, 43 243, 344 542), so it is not that layout. Kept undecoded | **Verified** (presence, size); meaning unknown |
+
+### 12.2 Movie mode (Live View/Movie switch)
+
+- The 7D selects movie mode with the Live View/Movie switch around its Start/Stop button, not with
+  the power switch. On movie: `0xD1C2` = 1 and `0xD1B1` = 2. On stills: `0xD1C2` = 0 and
+  `0xD1B1` = 1. **Verified**
+- In movie mode the 7D acknowledges `0xD1B0` = 2 (`0x2001`) but never echoes it in GetEvent, and
+  answers every GetViewFinderData with `0xA102`. An EVFMode `0xD1B1` = 1 write is accepted and the
+  body re-reports 2 straight away. Live view never starts, with the dial on P or on full Auto. **Verified**
+- The SL2 does stream in movie mode (§11.7), and echoes the `0xD1B0` write. Both bodies report
+  `0xD1B1` = 2 whenever `0xD1C2` = 1 (the SL2 fixtures were captured in movie mode). Whether 2
+  means movie mode on every body: **Hyp**. `0xD1B1` is therefore never used to decide anything.
+- Mirrorup: when no frame has arrived within the frame timeout, `0xD1C2` = 1 and `0xD1B0` never
+  reported the PC bit, `nextFrame()` fails with `.liveViewUnavailable` and "The camera is in movie
+  mode and isn't sending live view. Set its Live View/Movie switch (or power switch) to the stills
+  position." The engine keeps reconnecting, so moving the switch recovers by itself. All three
+  conditions keep this off the SL2, which streams there. **Verified** on the 7D, both ways.
+
+## 13. Licensing
 
 libgphoto2 is licensed under LGPL-2.1-or-later. Mirrorup links nothing from it and copies none of
 its code. It served only as protocol documentation: the opcode, property, event and response
@@ -768,7 +817,7 @@ FC.SDK and julianschroden.com write-ups were also used as descriptive references
 implementation must be written from this document and the hardware observations, not from those
 sources.
 
-## 13. Sources
+## 14. Sources
 
 - libgphoto2 `camlibs/ptp2/`: `ptp.h`, `ptp.c`, `ptp-pack.c`, `library.c`, `config.c`,
   `ptp-private.h`, `ptp-bugs.h` (master, fetched 2026-11-16):

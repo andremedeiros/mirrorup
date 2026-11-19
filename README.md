@@ -50,6 +50,7 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around the
 | Camera | USB ID | Status |
 |---|---|---|
 | Canon EOS Rebel SL2 / 200D | `04A9:32CC` | ✅ validated on firmware 1.0.1 and 1.1.0 (live view 960×640 or 1024×576 depending on camera settings, ~30 fps) |
+| Canon EOS 7D | `04A9:319A` | ✅ validated on firmware 2.0.3 (live view 1056×704, ~30 fps). Set the Live View/Movie switch to stills: in movie mode the 7D sends no live view over USB |
 | Other Canon EOS DSLRs/mirrorless | `04A9:*` | Should work if the body lists GetViewfinderData (`0x9153`) in its DeviceInfo. Unvalidated |
 | Other makers | — | No driver yet. `mirrorup devices` lists them as "not supported yet"; the app says so by name. |
 
