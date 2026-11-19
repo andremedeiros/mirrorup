@@ -79,6 +79,10 @@ func elapsed(_ operation: () async -> Void) async -> Duration {
     return ContinuousClock.now - start
 }
 
+/// The bound for "stop is prompt" tests, which stop the engine during a 30 s connect, frame wait,
+/// stall or backoff: far below what they'd take if stop waited, with room for a loaded CI runner.
+let promptStop: Duration = .seconds(5)
+
 /// Records every distinct state an engine passes through, via `statusStream()`.
 final class StateRecorder: Sendable {
     private let states = Mutex<[CaptureState]>([])

@@ -47,7 +47,11 @@ make app            # generate, then build Mirrorup.app (+ embedded Camera Exten
 make install-app    # copy the app to /Applications
 ```
 
-Tests use Swift Testing. Suites:
+Tests use Swift Testing. `.github/workflows/ci.yml` runs `make build test` on every pull request and
+every push to `main`, on the same `xcode-27` runner as releases. That runner is a loaded virtual
+machine: tests wait for conditions with generous deadlines instead of sleeping fixed short windows,
+and tests of the enhanced picture run only where the scaler really works (the VM claims it but
+fails every frame). Suites:
 
 | Target | Covers |
 |---|---|
