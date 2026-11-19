@@ -117,10 +117,9 @@ A failed run leaves nothing behind; a draft nobody wants can simply be deleted.
 **Release notes** come from GitHub Copilot: the workflow gives GitHub's generated notes (merged PRs
 since the previous version) and the commit subjects to the Copilot CLI (pinned in the workflow, no
 tools allowed) with a light model, `claude-haiku-5.5` unless the `RELEASE_NOTES_MODEL` variable says
-otherwise (e.g. `gpt-6-luna`). It needs `COPILOT_GITHUB_TOKEN` in the `release` environment: a
-fine-grained personal access token of someone with a Copilot plan, with the **Copilot Requests**
-permission. Without it, or if Copilot fails (quota, unknown model), the draft gets GitHub's generated
-notes instead.
+otherwise (e.g. `gpt-6-luna`). It authenticates with the workflow's own `GITHUB_TOKEN`
+(`copilot-requests: write`), so no token is stored; usage is billed to the repository owner's Copilot
+plan. If Copilot fails (quota, unknown model), the draft gets GitHub's generated notes instead.
 
 ### Updates
 
@@ -163,7 +162,6 @@ One-time setup (Apple Developer Program account holder):
    gh secret set NOTARY_API_KEY_ID $E
    gh secret set NOTARY_API_ISSUER_ID $E
    gh secret set SPARKLE_ED_PRIVATE_KEY $E < sparkle-private-key.txt   # see "Updates" above
-   gh secret set COPILOT_GITHUB_TOKEN $E                               # optional: release notes
    ```
 
 The workflow signs manually: it passes the profile's name as `MIRRORUP_APP_PROFILE`, which the app

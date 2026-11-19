@@ -14,6 +14,9 @@ on:
 
 permissions:
   contents: write
+  # Copilot CLI writes the release notes with the workflow's own token, billed to the repository
+  # owner's Copilot plan.
+  copilot-requests: write
 
 concurrency:
   group: release
@@ -236,7 +239,7 @@ jobs:
       - name: Write release notes
         env:
           PREVIOUS: ${{ steps.version.outputs.previous }}
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'claude-haiku-5.5' }}
           COPILOT_CLI_VERSION: 1.0.114
         run: |
@@ -246,10 +249,7 @@ jobs:
           [[ -n "$PREVIOUS" ]] && args+=(-f previous_tag_name="$PREVIOUS")
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" -q .body > generated.md
           cp generated.md notes.md
-          if [[ -z "$COPILOT_GITHUB_TOKEN" ]]; then
-            echo "::notice::No COPILOT_GITHUB_TOKEN in the release environment; using GitHub's generated notes"
-            exit 0
-          fi
+          # GitHub's notes stand if Copilot fails (quota, unknown model).
           range=${PREVIOUS:+$PREVIOUS..}HEAD
           {
             echo "Write the release notes for Mirrorup $VERSION, a macOS menu-bar app that turns a USB camera"

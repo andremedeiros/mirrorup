@@ -3,3 +3,9 @@
 self-hosted-runner:
   labels:
     - xcode-27
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      # Copilot CLI's GITHUB_TOKEN scope (docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli-in-actions),
+      # unknown to actionlint 1.7.12.
+      - 'unknown permission scope "copilot-requests"'
