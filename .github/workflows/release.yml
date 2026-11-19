@@ -1,6 +1,7 @@
 # Builds, signs (Developer ID), notarizes and drafts a Mirrorup release. Run it from the Actions tab
-# ("Run workflow" on main); a reviewer of the `release` environment approves the run before it gets
-# any signing secret, and publishes the draft after reading its notes.
+# ("Run workflow" on main). It releases only a commit CI already passed on; a reviewer of the `release`
+# environment then approves the run before it gets any signing secret, and publishes the draft after
+# reading its notes.
 # Setup (environment, certificate, profiles, notary key, secrets): docs/development.md → "Releases".
 name: Release
 
@@ -14,6 +15,8 @@ on:
 
 permissions:
   contents: write
+  # The ci-passed job reads the commit's CI result.
+  checks: read
   # Copilot CLI writes the release notes with the workflow's own token, billed to the repository
   # owner's Copilot plan.
   copilot-requests: write
@@ -23,7 +26,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The tests run in CI (ci.yml) on every push to main; the release reuses that result for the exact
+  # commit instead of running them again. main's ruleset doesn't guarantee it: admins can bypass it,
+  # PRs are tested separately, and a newer push cancels the previous commit's run. On a cheap runner
+  # and before the environment's approval, so nobody approves (or holds a macOS runner for) a commit
+  # that hasn't passed.
+  ci-passed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require a passing CI run for this commit
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Releases are built from main, not $GITHUB_REF"
+            exit 1
+          fi
+          query='[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last
+            | if . == null then "none" else "\(.status) \(.conclusion // "")" end'
+          deadline=$((SECONDS + 35 * 60))
+          while true; do
+            result=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=test" -q "$query")
+            case "$result" in
+              "completed success")
+                echo "CI passed on $GITHUB_SHA"
+                exit 0 ;;
+              "completed "*|none)
+                echo "::error::CI on $GITHUB_SHA: ${result}. Run CI on main again (Actions → CI → Run workflow, or re-run its last run), then release again."
+                exit 1 ;;
+            esac
+            if (( SECONDS > deadline )); then
+              echo "::error::CI on $GITHUB_SHA still ${result} after 35 minutes"
+              exit 1
+            fi
+            echo "CI on $GITHUB_SHA: $result; waiting"
+            sleep 30
+          done
+
   release:
+    needs: ci-passed
     runs-on: xcode-27
     timeout-minutes: 60
     # Required reviewers and the signing secrets live in this environment; it only deploys from main.
@@ -35,7 +77,7 @@ jobs:
       TAG: v${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # macOS/extension-version.sh counts commits; a shallow clone would undercount.
           fetch-depth: 0
@@ -51,10 +93,6 @@ jobs:
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
-          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
-            echo "::error::Releases are built from main, not $GITHUB_REF"
-            exit 1
-          fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
             echo "::error::$VERSION is not MAJOR.MINOR[.PATCH]"
             exit 1
@@ -84,8 +122,56 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Build and test
-        run: make build test
+      # Everything that runs code from outside this repository (XcodeGen from Homebrew, Swift package
+      # resolution, the Copilot CLI from npm) runs before the signing keys are installed.
+      - name: Generate the Xcode project and fetch packages
+        run: |
+          make project
+          xcodebuild -resolvePackageDependencies -project macOS/Mirrorup.xcodeproj -scheme Mirrorup
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Write release notes
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'claude-haiku-5.5' }}
+          COPILOT_CLI_VERSION: 1.0.114
+        run: |
+          # GitHub's generated notes (merged PRs since the previous version) are the fallback and the
+          # model's input; a reviewer reads and edits the result before publishing the draft.
+          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
+          [[ -n "$PREVIOUS" ]] && args+=(-f previous_tag_name="$PREVIOUS")
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" -q .body > generated.md
+          cp generated.md notes.md
+          # GitHub's notes stand if Copilot fails (quota, unknown model).
+          range=${PREVIOUS:+$PREVIOUS..}HEAD
+          {
+            echo "Write the release notes for Mirrorup $VERSION, a macOS menu-bar app that turns a USB camera"
+            echo "into a webcam. Readers are users deciding whether to update, not developers."
+            echo "- Markdown only, no preamble or closing remarks. Start with one sentence summarising the release."
+            echo "- Then short bullets grouped under '### New', '### Fixed' and '### Changed' (omit empty groups)."
+            echo "- Describe what users notice, in plain words; leave out refactors, tests, CI and docs-only changes."
+            echo "- Name supported cameras as the changes do; never invent features, cameras or numbers."
+            echo "- End with the '**Full Changelog**' line from the generated notes, unchanged."
+            echo
+            echo "Generated notes (merged pull requests):"
+            cat generated.md
+            echo
+            echo "Commits:"
+            git log --no-merges --format='- %s' "$range"
+          } > prompt.md
+          npm install -g "@github/copilot@$COPILOT_CLI_VERSION" > /dev/null
+          # No --allow-tool: the model only reads the prompt and writes text.
+          if copilot -p "$(cat prompt.md)" -s --no-ask-user --no-auto-update --model "$MODEL" > copilot.md \
+            && [[ -s copilot.md ]]; then
+            mv copilot.md notes.md
+          else
+            echo "::warning::Copilot ($MODEL) failed; using GitHub's generated notes"
+          fi
+          cat notes.md
 
       - name: Install signing certificate and profile
         env:
@@ -125,9 +211,9 @@ jobs:
 
       - name: Archive
         run: |
-          make project
           xcodebuild archive \
             -project macOS/Mirrorup.xcodeproj -scheme Mirrorup -configuration Release \
+            -disableAutomaticPackageResolution \
             -archivePath "$RUNNER_TEMP/Mirrorup.xcarchive" \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" \
             MIRRORUP_APP_PROFILE="$APP_PROFILE" \
@@ -231,50 +317,6 @@ jobs:
           cat appcast.xml
           # Fail the release rather than publish an update installed apps would reject.
           "$tools/bin/sign_update" --verify "$zip" "$signature" --ed-key-file "$RUNNER_TEMP/sparkle.key"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Write release notes
-        env:
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          GITHUB_TOKEN: ${{ github.token }}
-          MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'claude-haiku-5.5' }}
-          COPILOT_CLI_VERSION: 1.0.114
-        run: |
-          # GitHub's generated notes (merged PRs since the previous version) are the fallback and the
-          # model's input; a reviewer reads and edits the result before publishing the draft.
-          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
-          [[ -n "$PREVIOUS" ]] && args+=(-f previous_tag_name="$PREVIOUS")
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" -q .body > generated.md
-          cp generated.md notes.md
-          # GitHub's notes stand if Copilot fails (quota, unknown model).
-          range=${PREVIOUS:+$PREVIOUS..}HEAD
-          {
-            echo "Write the release notes for Mirrorup $VERSION, a macOS menu-bar app that turns a USB camera"
-            echo "into a webcam. Readers are users deciding whether to update, not developers."
-            echo "- Markdown only, no preamble or closing remarks. Start with one sentence summarising the release."
-            echo "- Then short bullets grouped under '### New', '### Fixed' and '### Changed' (omit empty groups)."
-            echo "- Describe what users notice, in plain words; leave out refactors, tests, CI and docs-only changes."
-            echo "- Name supported cameras as the changes do; never invent features, cameras or numbers."
-            echo "- End with the '**Full Changelog**' line from the generated notes, unchanged."
-            echo
-            echo "Generated notes (merged pull requests):"
-            cat generated.md
-            echo
-            echo "Commits:"
-            git log --no-merges --format='- %s' "$range"
-          } > prompt.md
-          npm install -g "@github/copilot@$COPILOT_CLI_VERSION" > /dev/null
-          # No --allow-tool: the model only reads the prompt and writes text.
-          if copilot -p "$(cat prompt.md)" -s --no-ask-user --no-auto-update --model "$MODEL" > copilot.md \
-            && [[ -s copilot.md ]]; then
-            mv copilot.md notes.md
-          else
-            echo "::warning::Copilot ($MODEL) failed; using GitHub's generated notes"
-          fi
-          cat notes.md
 
       - name: Draft release
         run: |

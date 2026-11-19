@@ -42,9 +42,12 @@ packages:
   Mirrorup:
     path: ..
   # The app's only third-party dependency (AGENTS.md): updates. Not used by the package or the extension.
+  # Pinned to the commit of tag 2.10.1, not the tag: the generated project (and its Package.resolved)
+  # isn't committed, so a moved tag would otherwise be picked up by the next release build. Keep the
+  # workflow's SPARKLE_VERSION/SPARKLE_SHA256 (sign_update) on the same release.
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    exactVersion: 2.10.1
+    revision: ab7d71291238df6e0492143b120c9b696a35f603 # 2.10.1
 
 targets:
   Mirrorup:

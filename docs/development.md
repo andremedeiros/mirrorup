@@ -102,13 +102,20 @@ xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 ## Releases
 
 Releases are made on GitHub, never from a laptop. Actions → **Release** → **Run workflow** (branch
-`main`) → enter the version (`1.1.0`). Anyone with write access can start a run; it then waits for a
+`main`) → enter the version (`1.1.0`). Anyone with write access can start a run.
+
+The run first requires that CI (`ci.yml`, check `test`) passed on the exact commit it builds; the
+release doesn't run the tests again. It waits while CI is still running and refuses a commit whose
+run failed, was cancelled (a newer push supersedes it) or never ran (merged with admin bypass):
+Actions → **CI** → **Run workflow** on `main` (or re-run its last run), then start the release
+again. `main`'s ruleset alone doesn't guarantee a tested commit: admins can bypass it, PRs are
+tested separately, and a newer push cancels the previous run. Only then does the run wait for a
 reviewer of the `release` environment (André or Dana; nobody approves their own run, admins can
 bypass) before it receives any signing secret.
 
-`.github/workflows/release.yml` runs on GitHub's `xcode-27` runner (Xcode 27.2). It refuses a
-version that isn't `MAJOR.MINOR[.PATCH]`, already exists, or isn't above the highest `v*` tag; runs
-`make build test`; archives the app signed with Developer ID; notarizes and staples it; signs the
+`.github/workflows/release.yml` builds on GitHub's `xcode-27` runner (Xcode 27.2). It refuses a
+version that isn't `MAJOR.MINOR[.PATCH]`, already exists, or isn't above the highest `v*` tag;
+archives the app signed with Developer ID; notarizes and staples it; signs the
 zip for Sparkle and writes `appcast.xml`; writes release notes; and creates a **draft** release with
 both files. The version input sets `MARKETING_VERSION`, the workflow run number the app's build
 number (`CURRENT_PROJECT_VERSION`), the extension's own history its version (above; the checkout
@@ -117,6 +124,18 @@ fetches the full history for it). Installed apps replace the extension only when
 The reviewer reads the draft's notes, edits them if needed and clicks **Publish release**. Only then
 does the `v<version>` tag exist (on the commit the run built) and do installed apps see the update.
 A failed run leaves nothing behind; a draft nobody wants can simply be deleted.
+
+**Protecting the signing keys.** Whoever can change what runs on `main` can make an approved release
+leak the keys, so:
+- The "Protect main" ruleset requires a PR with the CI check (`test`) passing and one approving
+  review, plus a code-owner review (`.github/CODEOWNERS`) for the workflows, `Makefile`,
+  `Package.swift`, `macOS/project.yml` and `macOS/*.sh`. It blocks force-pushes and deletion; repo
+  admins can bypass it.
+- Actions are limited to GitHub's own and pinned to commit hashes (Dependabot opens PRs to move
+  them); Sparkle is pinned to a commit in `project.yml`. CI on PRs from outside contributors waits
+  for approval and never gets secrets.
+- In `release.yml`, everything that runs outside code (XcodeGen from Homebrew, package resolution,
+  the Copilot CLI from npm) runs before the keys are installed; the archive doesn't resolve packages.
 
 **Release notes** come from GitHub Copilot: the workflow gives GitHub's generated notes (merged PRs
 since the previous version) and the commit subjects to the Copilot CLI (pinned in the workflow, no
