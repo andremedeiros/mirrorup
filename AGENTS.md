@@ -63,6 +63,7 @@ make cli              # release CLI at .build/release/mirrorup
 make app              # generate the Xcode project from project.yml, build app + extension
 make install-app      # copy to /Applications (required for system extension activation)
 .build/debug/mirrorup devices | inspect | ptp info | ptp operations
+.build/debug/mirrorup ptp dump --body 7d --output-dir fixtures   # raw fixtures, serial zeroed
 .build/debug/mirrorup liveview snapshot --output frame.jpg
 .build/debug/mirrorup liveview benchmark --duration 60 --json out.json
 log stream --predicate 'subsystem == "cool.andre.Mirrorup"' --level debug
@@ -114,7 +115,9 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 
 ## Testing conventions
 
-Swift Testing (`import Testing`). Deterministic fixtures captured from the real SL2 are in
-`Tests/*/Fixtures` (`deviceinfo-sl2.bin`, `getevent-initial-sl2.bin`, `evf-sl2.bin`). Hardware tests
+Swift Testing (`import Testing`). Deterministic fixtures captured from real bodies are in
+`Tests/*/Fixtures` (`deviceinfo-sl2.bin`, `getevent-initial-sl2.bin`, `evf-sl2.bin`, and the `-7d`
+set from an EOS 7D). Capture new ones with `mirrorup ptp dump --body <name> --output-dir <dir>`
+(serial zeroed unless `--keep-serial`; aim the camera at a blank surface, the EVF frame is an image). Hardware tests
 are in `Tests/MirrorupIntegrationTests/HardwareTests.swift`, gated by `MIRRORUP_HARDWARE_TESTS=1`.
 `SimulatedSL2` (Canon tests) and `SyntheticCamera` cover protocol and engine behaviour without hardware.

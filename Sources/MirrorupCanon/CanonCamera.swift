@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 public import MirrorupPTP
 public import MirrorupCapture
 import MirrorupDevices
@@ -6,7 +6,7 @@ import MirrorupDiagnostics
 
 /// Canon EOS live-view backend. Owns the PTP session and all Canon-specific state; serializes
 /// device access by being an actor (and through `PTPSession`'s transaction gate).
-public actor CanonCamera: CameraBackend, LiveViewPolling {
+public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
     public struct Options: Sendable {
         /// Pause between GetViewfinderData polls while the camera answers "not ready".
         public var notReadyRetryInterval: Duration = .milliseconds(3)
@@ -74,6 +74,10 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
     private var epoch: UInt64 = 0
     /// GetViewfinderData accounting for benchmarks and diagnostics.
     public private(set) var pollStatistics = LiveViewPollStatistics()
+    /// The first GetEvent data phase ("getevent-initial") and the latest GetViewfinderData payload
+    /// ("evf"), as received, for `mirrorup ptp dump`. Bounded: one of each; the EVF buffer is the
+    /// one `latestFrame` already references.
+    public private(set) var rawPayloads: [String: Data] = [:]
 
     public init(session: PTPSession, identity: CameraIdentity, options: Options = Options()) {
         self.session = session
@@ -340,6 +344,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
                     rearmedSinceLastFrame = false
                     pollStatistics.frames += 1
                     pollStatistics.payloadBytes += result.data.count
+                    rawPayloads["evf"] = result.data
                     lastFrameTime = .now
                     latestFrame = parsed
                     return CameraFrame(sequence: sequence, jpeg: parsed.jpeg, acquisitionStart: start, acquisitionEnd: end,
@@ -405,6 +410,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling {
     func drainEvents() async throws(PTPError) {
         for _ in 0..<50 {
             let result = try await session.execute(PTPCommand(CanonOperation.getEvent), timeout: options.commandTimeout)
+            if rawPayloads["getevent-initial"] == nil { rawPayloads["getevent-initial"] = result.data }
             let events = try CanonEventParser.parse(result.data)
             if events.isEmpty { return }
             properties.apply(events)

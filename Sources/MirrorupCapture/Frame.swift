@@ -181,3 +181,10 @@ public struct LiveViewPollStatistics: Sendable, Equatable {
 public protocol LiveViewPolling: Sendable {
     var pollStatistics: LiveViewPollStatistics { get async }
 }
+
+/// Optional capability of a `CameraBackend` that keeps the raw data phases it received, for test
+/// fixtures (`mirrorup ptp dump`). Keys are the fixture name stems the driver's tests use
+/// (e.g. "evf" is saved as `evf-<body>.bin`); values are the payloads exactly as received.
+public protocol RawPayloadRecording: Sendable {
+    var rawPayloads: [String: Data] { get async }
+}
