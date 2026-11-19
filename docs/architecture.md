@@ -83,7 +83,10 @@ Every value the camera reports is decoded once, in the vendor layer, into the ve
 keyed by `ItemKind` (an enum; neutral kinds such as `.aperture`, `.lensName`, `.focusPoints`, plus
 `.vendorProperty(code)` / `.vendorFrameBlock(type)` for vendor codes without a neutral meaning). Each
 item carries the human value, the raw protocol value, the allowed values, and whether any public
-source documents it.
+source documents it. An item may also carry a `CameraSymbol`, the camera's own vector pictogram for
+the value (Canon: the mode-dial icons in `CanonModeSymbols`, from the outlines of the SL2 manual's
+icon fonts); the popover shows it in place of the shooting mode's name. Symbols are presentation
+only and are not encoded.
 
 - **Camera-wide:** `CameraBackend.metadata()`, read on demand through
   `CaptureEngine.cameraMetadata()` (popover open, Camera Info window, diagnostics export); nothing

@@ -66,7 +66,8 @@ public struct NikonDriver: CameraDriver {
 - Leave the camera as you found it: restore any setting live view needed on `stopLiveView` and
   `disconnect`.
 - `metadata()` decodes everything the camera reports into `CameraMetadata` (neutral `ItemKind`s
-  where they fit, `.vendorProperty(code)` otherwise).
+  where they fit, `.vendorProperty(code)` otherwise). Give the `.exposureMode` item the camera's own
+  dial icon as a `CameraSymbol` when you have its outline; without one the popover shows the name.
 
 Optional capabilities, discovered with `as?`:
 

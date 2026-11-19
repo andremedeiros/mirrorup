@@ -71,7 +71,7 @@ final class AppModel {
     private(set) var isReadingCameraInfo = false
     /// One line for the popover: shooting mode and lens (`summary(_:)`), derived when camera info is
     /// read (never per frame).
-    private(set) var cameraSummary: String?
+    private(set) var cameraSummary: CameraSummary?
     /// Changes when the camera reports a setting change (mode dial, exposure...); views that show
     /// camera info or controls re-read them on change. Assigned only on change, not per status.
     private(set) var settingsRevision: UInt64 = 0
@@ -508,13 +508,28 @@ final class AppModel {
     }
 
     /// The popover's subtitle: shooting mode and lens ("P · 18-55mm").
-    private static func summary(_ info: CameraMetadata) -> String? {
+    struct CameraSummary: Equatable {
+        /// The mode as on the dial ("P"); the dial's icon replaces it when the camera has one.
+        let mode: String?
+        /// The mode's full name ("P (Program AE)"), for VoiceOver and the tooltip.
+        let modeName: String?
+        let modeSymbol: CameraSymbol?
+        let lens: String?
+    }
+
+    private static func summary(_ info: CameraMetadata) -> CameraSummary? {
         // Shooting mode as on the dial, then the lens, which may truncate. Drivers write explained
         // values as "P (Program AE)"; the part before the parenthesis is what the dial says.
         // Exposure values read "Auto" outside an exposure and say nothing.
-        let mode = info.item(.exposureMode)?.value.split(separator: " (").first.map(String.init)
-        let parts = [mode, info.item(.lensName)?.value].compactMap { $0 }.filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        let modeItem = info.item(.exposureMode).flatMap { $0.value.isEmpty ? nil : $0 }
+        let lens = info.item(.lensName)?.value
+        let summary = CameraSummary(
+            mode: modeItem?.value.split(separator: " (").first.map(String.init),
+            modeName: modeItem?.value,
+            modeSymbol: modeItem?.symbol,
+            lens: lens?.isEmpty == false ? lens : nil
+        )
+        return summary.mode == nil && summary.lens == nil ? nil : summary
     }
 
     // MARK: Derived UI state

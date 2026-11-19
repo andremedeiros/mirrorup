@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import MirrorupCapture
 import SwiftUI
 
 /// The menu-bar popover: the live preview, one switch, a problem line only when something needs the
@@ -219,7 +220,7 @@ private struct LiveBadge: View {
 
 private struct CameraHeader: View {
     let name: String?
-    let summary: String?
+    let summary: AppModel.CameraSummary?
     let phase: AppModel.Phase
     @Binding var isStreaming: Bool
 
@@ -229,10 +230,14 @@ private struct CameraHeader: View {
                 Text(name ?? "Mirrorup")
                     .font(.headline)
                     .lineLimit(1)
-                Text(summary ?? phase.caption)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let summary {
+                    SummaryLine(summary: summary)
+                } else {
+                    Text(phase.caption)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             Toggle("Stream", isOn: $isStreaming)
@@ -240,6 +245,75 @@ private struct CameraHeader: View {
                 .labelsHidden()
                 .accessibilityLabel("Stream camera")
         }
+    }
+}
+
+/// "P · 18-55mm", with the camera's own mode-dial icon in place of the mode's name when it has one.
+private struct SummaryLine: View {
+    let summary: AppModel.CameraSummary
+    /// The icons' capital letters stand this much taller than the text's, as the dial's bold letters
+    /// do; the extra height is split above and below so the icon stays centred on the text.
+    private static let capScale = 1.15
+    /// Cap height of `.subheadline`, which the line uses.
+    private let textCapHeight = NSFont.preferredFont(forTextStyle: .subheadline).capHeight
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let symbol = summary.modeSymbol {
+                let scale = textCapHeight * Self.capScale / symbol.capHeight
+                let overhang = textCapHeight * (Self.capScale - 1) / 2
+                CameraSymbolShape(symbol: symbol)
+                    .fill(fill(symbol))
+                    .frame(width: symbol.width * scale, height: symbol.height * scale)
+                    .alignmentGuide(.firstTextBaseline) { _ in symbol.baseline * scale - overhang }
+                    .help(summary.modeName ?? "")
+                    .accessibilityElement()
+                    .accessibilityLabel(summary.modeName ?? "")
+            } else if let mode = summary.mode {
+                Text(mode)
+                    .layoutPriority(1)
+            }
+            if summary.mode != nil, summary.lens != nil {
+                Text("·")
+            }
+            if let lens = summary.lens {
+                Text(lens)
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
+    /// The camera's own colour for the symbol (Scene Intelligent Auto's green), else the text's.
+    private func fill(_ symbol: CameraSymbol) -> AnyShapeStyle {
+        guard let tint = symbol.tint else { return AnyShapeStyle(.secondary) }
+        let c = colorScheme == .dark ? tint.dark : tint.light
+        return AnyShapeStyle(Color(.sRGB, red: c.red, green: c.green, blue: c.blue))
+    }
+}
+
+/// A `CameraSymbol` scaled uniformly into the frame, top-left aligned.
+private struct CameraSymbolShape: Shape {
+    let symbol: CameraSymbol
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width / symbol.width, rect.height / symbol.height)
+        func point(_ p: CameraSymbol.Point) -> CGPoint {
+            CGPoint(x: rect.minX + p.x * scale, y: rect.minY + p.y * scale)
+        }
+        var path = Path()
+        for element in symbol.elements {
+            switch element {
+            case .move(let to): path.move(to: point(to))
+            case .line(let to): path.addLine(to: point(to))
+            case .quadCurve(let to, let control): path.addQuadCurve(to: point(to), control: point(control))
+            case .curve(let to, let c1, let c2): path.addCurve(to: point(to), control1: point(c1), control2: point(c2))
+            case .close: path.closeSubpath()
+            }
+        }
+        return path
     }
 }
 
