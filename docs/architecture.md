@@ -84,9 +84,9 @@ keyed by `ItemKind` (an enum; neutral kinds such as `.aperture`, `.lensName`, `.
 `.vendorProperty(code)` / `.vendorFrameBlock(type)` for vendor codes without a neutral meaning). Each
 item carries the human value, the raw protocol value, the allowed values, and whether any public
 source documents it. An item may also carry a `CameraSymbol`, the camera's own vector pictogram for
-the value (Canon: the mode-dial icons in `CanonModeSymbols`, from the outlines of the SL2 manual's
-icon fonts); the popover shows it in place of the shooting mode's name. Symbols are presentation
-only and are not encoded.
+the value (Canon: the mode-dial icons in `CanonModeSymbols`, from the outlines of the icon fonts
+embedded in Canon's SL2, 450D, RP and M6 Mark II manuals); the popover shows it in place of the
+shooting mode's name. Symbols are presentation only and are not encoded.
 
 - **Camera-wide:** `CameraBackend.metadata()`, read on demand through
   `CaptureEngine.cameraMetadata()` (popover open, Camera Info window, diagnostics export); nothing
