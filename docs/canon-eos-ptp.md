@@ -690,9 +690,10 @@ answered result `0xC`:
   (One-Shot) in P.
 - OLCInfoChanged (`0xC1A5`) after every failed full press carried Button = 3 (the 0x0001 entry).
   libgphoto2 reads 3 as a full-press failure on the EOS M2. **Ref(`library.c`:`camera_trigger_canon_eos_capture`)**
-- `capturePhoto()` messages for `0xC`/`0xE`: "The camera's power switch is on movie mode. Move it to
-  ON to take photos." while `0xD1C2` = 1; otherwise "The camera refused the photo as if it were in
-  movie mode. If its power switch is already on ON, turn it to the movie position and back to ON."
+- `capturePhoto()` messages for `0xC`/`0xE`: "The camera is in movie mode. Move its power switch
+  to ON, or its Live View/Movie switch to stills, to take photos." while `0xD1C2` = 1; otherwise
+  "The camera refused the photo as if it were in movie mode. If its power switch is already on
+  ON, turn it to the movie position and back to ON."
 - Not verified on hardware: RequestObjectTransfer (capture to PC RAM) and TransferComplete, RAW or
   RAW+JPEG files, and capture while zoomed in.
 
@@ -806,6 +807,9 @@ Blocks arrive in the order `1, 4, 5, 6, 7, 3, 8, 0` (three captures). **Verified
 - In movie mode the 7D acknowledges `0xD1B0` = 2 (`0x2001`) but never echoes it in GetEvent, and
   answers every GetViewFinderData with `0xA102`. An EVFMode `0xD1B1` = 1 write is accepted and the
   body re-reports 2 straight away. Live view never starts, with the dial on P or on full Auto. **Verified**
+- That holds for live view *started* in movie mode. Moving the switch to movie while PC live
+  view is already running kept frames coming, with live view on the rear screen too (once, in
+  the app). **Verified** (one observation)
 - The SL2 does stream in movie mode (§11.7), and echoes the `0xD1B0` write. Both bodies report
   `0xD1B1` = 2 whenever `0xD1C2` = 1 (the SL2 fixtures were captured in movie mode). Whether 2
   means movie mode on every body: **Hyp**. `0xD1B1` is therefore never used to decide anything.

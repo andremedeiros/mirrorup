@@ -105,7 +105,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         #expect(!state.batteryIsLow)
         #expect(state.shotsRemaining == 0)
         #expect(!state.canCapturePhoto)
-        #expect(state.photoUnavailableReason == "The camera's power switch is on movie mode. Move it to ON to take photos.")
+        #expect(state.photoUnavailableReason == "The camera is in movie mode. Move its power switch to ON, or its Live View/Movie switch to stills, to take photos.")
         // Not streaming: no AF, no zoom.
         #expect(!state.canAutofocus && !state.canFocusAtPoint)
         #expect(state.zoom == nil)
@@ -305,7 +305,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
             _ = try await camera.capturePhoto()
             Issue.record("expected an error")
         } catch {
-            #expect(error.message == "The camera's power switch is on movie mode. Move it to ON to take photos.")
+            #expect(error.message == "The camera is in movie mode. Move its power switch to ON, or its Live View/Movie switch to stills, to take photos.")
         }
         #expect(!sim.state.withLock { $0.log.contains(0x9128) })
     }
@@ -318,7 +318,7 @@ private func objectAddedRecord(handle: UInt32, storage: UInt32, format: UInt16, 
         #expect(failure(.ok, 7)?.message == "The camera could not write to its memory card. Check that the card isn't full.")
         #expect(failure(.ok, 8)?.message == "The memory card is locked. Unlock it to take photos.")
         #expect(failure(.ok, 0x0B)?.message == "Attach a lens to take photos.")
-        #expect(failure(.ok, 0x0C, movie: true)?.message == "The camera's power switch is on movie mode. Move it to ON to take photos.")
+        #expect(failure(.ok, 0x0C, movie: true)?.message == "The camera is in movie mode. Move its power switch to ON, or its Live View/Movie switch to stills, to take photos.")
         // SL2 with live view off: DeviceBusy after 5 s with result 1; the result explains it.
         #expect(failure(.deviceBusy, 1)?.message == "The camera could not focus, so it did not take the photo.")
         #expect(failure(.deviceBusy, 0)?.message == "The camera is busy and did not take the photo. Try again in a moment.")

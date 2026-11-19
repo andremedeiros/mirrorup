@@ -66,7 +66,7 @@ public enum CanonReleaseFailure: UInt32, Sendable, CaseIterable {
     case movieMode = 0x0E
     case lensRetracted = 0x0F
 
-    static let movieModeMessage = "The camera's power switch is on movie mode. Move it to ON to take photos."
+    static let movieModeMessage = "The camera is in movie mode. Move its power switch to ON, or its Live View/Movie switch to stills, to take photos."
     static let movieModeStuckMessage = "The camera refused the photo as if it were in movie mode. If its power switch is already on ON, turn it to the movie position and back to ON."
     static let noSpaceMessage = "The camera has no room for photos. Check its memory card."
     static let unexplainedMessage = "The camera did not take the photo. Check the camera's screen for a message."
