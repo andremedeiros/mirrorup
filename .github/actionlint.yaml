@@ -1,0 +1,5 @@
+# actionlint configuration. `xcode-27` is GitHub's macOS runner with Xcode 27 (release.yml); actionlint's
+# built-in label list doesn't include it yet.
+self-hosted-runner:
+  labels:
+    - xcode-27
