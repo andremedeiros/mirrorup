@@ -19,6 +19,7 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     private let delegate: CameraDelegate
     private let state = Mutex(State())
     private let openTimeout: Duration
+    private let readyTimeout: Duration
 
     private struct State {
         var phase: Phase = .closed
@@ -71,11 +72,77 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     }
 
     @MainActor
-    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10)) {
+    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10), readyTimeout: Duration = .seconds(60)) {
         self.camera = camera
         self.openTimeout = openTimeout
+        self.readyTimeout = readyTimeout
         delegate = CameraDelegate()
         camera.delegate = delegate
+    }
+
+    /// ptpcamerad answers PTP pass-through only after it has catalogued the card: with 479 files a
+    /// 7D took 10–24 s after the session opened, and GetDeviceInfo sent before that timed out (5 s).
+    /// Waits for the complete catalog, bounded by `readyTimeout` and by cancellation (the capture
+    /// engine's connect deadline stays in charge); either way it carries on and lets the command
+    /// deadlines decide. Returns how long it waited and whether the catalog completed.
+    private func waitForContentCatalog() async -> (waited: Duration, complete: Bool) {
+        let start = ContinuousClock.now
+        let timeout = readyTimeout
+        let camera = UncheckedBox(camera)
+        let wait = CatalogWait()
+        let timer = Task {
+            do { try await Task.sleep(for: timeout) } catch { return }
+            wait.finish(false)
+        }
+        defer { timer.cancel() }
+        Task { @MainActor in
+            if delegate.isReady || camera.value.contentCatalogPercentCompleted >= 100 {
+                wait.finish(true)
+            } else {
+                delegate.onReady = { wait.finish(true) }
+            }
+        }
+        let complete = await withTaskCancellationHandler {
+            await withCheckedContinuation { wait.install($0) }
+        } onCancel: {
+            wait.finish(false)
+        }
+        await MainActor.run { delegate.onReady = nil }
+        return (ContinuousClock.now - start, complete)
+    }
+
+    /// One-shot result for `waitForContentCatalog`; the first `finish` wins, before or after `install`.
+    private final class CatalogWait: Sendable {
+        private enum Slot { case empty, early(Bool), waiting(CheckedContinuation<Bool, Never>), done }
+        private let slot = Mutex(Slot.empty)
+
+        func install(_ continuation: CheckedContinuation<Bool, Never>) {
+            let early: Bool? = slot.withLock { slot in
+                if case .early(let value) = slot {
+                    slot = .done
+                    return value
+                }
+                slot = .waiting(continuation)
+                return nil
+            }
+            if let early { continuation.resume(returning: early) }
+        }
+
+        func finish(_ value: Bool) {
+            let waiter: CheckedContinuation<Bool, Never>? = slot.withLock { slot in
+                switch slot {
+                case .empty:
+                    slot = .early(value)
+                    return nil
+                case .waiting(let continuation):
+                    slot = .done
+                    return continuation
+                case .early, .done:
+                    return nil
+                }
+            }
+            waiter?.resume(returning: value)
+        }
     }
 
     public func open() async throws(PTPTransportError) {
@@ -96,17 +163,28 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
             }
         }
         try result.get()
+        // Both handlers also end a pending content-catalog wait (`onReady`), which then sees the failure.
         let token = await MainActor.run { () -> UInt64 in
-            delegate.onSessionClosed = { [weak self] in self?.fail(.disconnected("ImageCaptureCore closed the session")) }
+            delegate.onSessionClosed = { [weak self] in
+                self?.fail(.disconnected("ImageCaptureCore closed the session"))
+                self?.delegate.onReady?()
+            }
             return ImageCaptureBrowser.shared.onRemoval(of: camera) { [weak self] in
                 self?.fail(.disconnected("camera removed"))
+                self?.delegate.onReady?()
             }
         }
         state.withLock {
             $0.phase = .open
             $0.removalToken = token
         }
-        Diagnostics.imageCapture.info("ImageCaptureCore session open on \(self.cameraNameForLogs, privacy: .public)")
+        let (waited, complete) = await waitForContentCatalog()
+        if case .failed(let error) = state.withLock({ $0.phase }) { throw error }
+        if complete {
+            Diagnostics.imageCapture.info("ImageCaptureCore session open on \(self.cameraNameForLogs, privacy: .public) (content catalog ready after \(waited, privacy: .public))")
+        } else {
+            Diagnostics.imageCapture.notice("ImageCaptureCore session open on \(self.cameraNameForLogs, privacy: .public); content catalog still incomplete after \(waited, privacy: .public), continuing")
+        }
     }
 
     public func execute(
@@ -243,6 +321,9 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
 @MainActor
 final class CameraDelegate: NSObject, ICCameraDeviceDelegate {
     var onSessionClosed: (@MainActor () -> Void)?
+    /// Set once ImageCaptureCore reports the content catalog complete for this session.
+    private(set) var isReady = false
+    var onReady: (@MainActor () -> Void)?
 
     nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
         MainActor.assumeIsolated { onSessionClosed?() }
@@ -258,7 +339,12 @@ final class CameraDelegate: NSObject, ICCameraDeviceDelegate {
     nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {
         Diagnostics.imageCapture.debug("PTP event \(eventData.count) bytes")
     }
-    nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
+    nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+        MainActor.assumeIsolated {
+            isReady = true
+            onReady?()
+        }
+    }
     nonisolated func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
     nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
 }
