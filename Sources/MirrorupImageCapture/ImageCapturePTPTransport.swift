@@ -167,8 +167,12 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
             if let t = error.transportError {
                 // ptpcamerad may still complete the abandoned request later; the late completion is
                 // ignored by `Pending`. The session stays usable only for non-sticky errors.
+                // Cancellation is not sticky: it means the caller stopped waiting (a capture stop
+                // landing during a frame poll), not that the camera failed. Failing the session here
+                // made teardown's EVF restore and remote-mode exit fail with "operation cancelled",
+                // leaving the camera's screen dark (seen on a 7D, 1 stop in 3).
                 switch t {
-                case .timedOut, .disconnected, .cancelled, .notOpen:
+                case .timedOut, .disconnected, .notOpen:
                     state.withLock { $0.phase = .failed(t) }
                 default: break
                 }
