@@ -49,7 +49,10 @@ private func value(_ code: UInt32, _ v: UInt32) -> String {
         #expect(try item(0xD103) == CameraMetadata.Item(.iso, value: "Auto", raw: "0x0"))
         #expect(try item(0xD101).value == "Auto")
         #expect(try item(0xD102).value == "Auto")
-        #expect(try item(0xD138) == CameraMetadata.Item(.exposureMode, value: "Scene Intelligent Auto", raw: "0x16"))
+        #expect(try item(0xD138) == CameraMetadata.Item(.exposureMode, value: "Scene Intelligent Auto", raw: "0x16",
+                                                         symbol: CanonModeSymbols.symbol(forExposureMode: 0x16)))
+        #expect(try item(0xD138).symbol != nil)
+        #expect(try item(0xD105).symbol == nil)
         #expect(try item(0xD105).kind == .vendorProperty(0xD105))
         #expect(try item(0xD105).label == "Auto Exposure Mode")
         #expect(try item(0xD105).value == "Scene Intelligent Auto")
@@ -247,5 +250,48 @@ private func value(_ code: UInt32, _ v: UInt32) -> String {
         #expect(CanonResponse.describe(.ok) == "OK (0x2001)")
         #expect(CanonResponse.describe(CanonResponse.objectNotReady) == "Canon_ObjectNotReady (0xA102)")
         #expect(CanonResponse.describe(PTPResponseCode(0xA1E8)) == "0xA1E8")
+    }
+}
+
+@Suite struct CanonModeSymbolTests {
+    /// Every outline parses, belongs to a documented mode and stays inside its box: a mistyped
+    /// coordinate would otherwise draw over the lens name or be cut off.
+    @Test func everyOutlineIsAValidSymbolForADocumentedMode() throws {
+        #expect(CanonModeSymbols.outlines.count == 30)
+        for (mode, outline) in CanonModeSymbols.outlines {
+            #expect(CanonValueTables.exposureMode[mode] != nil, "0x\(String(mode, radix: 16)) is not a mode")
+            let symbol = try #require(CanonModeSymbols.symbol(forExposureMode: mode), "0x\(String(mode, radix: 16))")
+            #expect(symbol.width == outline.width)
+            #expect(!symbol.elements.isEmpty)
+            for element in symbol.elements {
+                let points: [CameraSymbol.Point] = switch element {
+                case .move(let p), .line(let p): [p]
+                case .quadCurve(let p, let c): [p, c]
+                case .curve(let p, let c1, let c2): [p, c1, c2]
+                case .close: []
+                }
+                for p in points {
+                    #expect((-1...symbol.width + 1).contains(p.x) && (-1...symbol.height + 1).contains(p.y),
+                            "0x\(String(mode, radix: 16)) point \(p) outside \(symbol.width)×\(symbol.height)")
+                }
+            }
+        }
+    }
+
+    @Test func dialModesHaveTheirIconAndOthersKeepTheirName() {
+        func symbol(_ mode: UInt32) -> CameraSymbol? {
+            CanonCatalog.describe(property: 0xD138, value: .integer(mode)).symbol
+        }
+        for mode: UInt32 in [0x00, 0x01, 0x02, 0x03, 0x16, 0x0F, 0x13, 0x19, 0x14] {
+            #expect(symbol(mode) != nil, "0x\(String(mode, radix: 16))")
+        }
+        #expect(symbol(0x04) == nil)  // Bulb: no icon in the SL2 manual
+        #expect(symbol(0x37) == nil)  // Fv
+        #expect(symbol(0x16) != symbol(0x00))
+        // The dial prints only Scene Intelligent Auto in colour.
+        #expect(symbol(0x16)?.tint == CanonModeSymbols.sceneIntelligentAutoGreen)
+        #expect(CanonModeSymbols.outlines.keys.filter { $0 != 0x16 }.allSatisfy {
+            CanonModeSymbols.symbol(forExposureMode: $0)?.tint == nil
+        })
     }
 }

@@ -31,7 +31,11 @@ extension CanonCatalog {
             return CameraMetadata.Item(.vendorProperty(code), value: raw.isEmpty ? "Empty" : raw, raw: raw, isDocumented: false)
         }
         let text = format(value, as: spec.format, width: spec.width)
-        if let kind = spec.kind { return CameraMetadata.Item(kind, value: text, raw: raw) }
+        if let kind = spec.kind {
+            let mode = kind == .exposureMode ? value.integer.map { $0 & spec.width.mask } : nil
+            let symbol = mode.flatMap(CanonModeSymbols.symbol(forExposureMode:))
+            return CameraMetadata.Item(kind, value: text, raw: raw, symbol: symbol)
+        }
         return CameraMetadata.Item(.vendorProperty(code), label: spec.label, value: text, raw: raw)
     }
 

@@ -36,14 +36,23 @@ public struct CameraMetadata: Sendable, Equatable, Codable {
         /// Values the camera currently accepts for this setting, in human form (empty if the camera
         /// did not report a list or the setting is read-only).
         public var allowedValues: [String]
+        /// The camera's own pictogram for the value (the mode-dial icon), when the driver has one.
+        /// Presentation only: not encoded, so JSON exports carry the value itself.
+        public var symbol: CameraSymbol? = nil
 
-        public init(_ kind: ItemKind, label: String? = nil, value: String, raw: String, isDocumented: Bool = true, allowedValues: [String] = []) {
+        public init(_ kind: ItemKind, label: String? = nil, value: String, raw: String, isDocumented: Bool = true,
+                    allowedValues: [String] = [], symbol: CameraSymbol? = nil) {
             self.kind = kind
             self.label = label ?? kind.title
             self.value = value
             self.raw = raw
             self.isDocumented = isDocumented
             self.allowedValues = allowedValues
+            self.symbol = symbol
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case kind, label, value, raw, isDocumented, allowedValues
         }
 
         public var id: ItemKind { kind }
