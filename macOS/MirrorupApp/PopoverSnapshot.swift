@@ -14,7 +14,7 @@ enum PopoverSnapshot {
     static let argument = "MirrorupSnapshotPopover"
 
     @MainActor
-    static func scheduleIfRequested(model: AppModel) {
+    static func scheduleIfRequested(model: AppModel, updater: Updater) {
         guard let path = UserDefaults.standard.string(forKey: argument) else { return }
         Diagnostics.app.notice("Popover snapshot scheduled: \(path, privacy: .public)")
         Task { @MainActor in
@@ -22,7 +22,7 @@ enum PopoverSnapshot {
             await model.refreshCameraInfo()
             await model.refreshControls()
             try? await Task.sleep(for: .seconds(2))
-            write(MenuView(model: model), to: URL(fileURLWithPath: path))
+            write(MenuView(model: model, updater: updater), to: URL(fileURLWithPath: path))
         }
     }
 

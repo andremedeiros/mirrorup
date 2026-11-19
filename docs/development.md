@@ -99,14 +99,31 @@ xcrun xctrace record --template 'Time Profiler' --attach Mirrorup   # profiling
 
 Pushing a tag `vMAJOR.MINOR[.PATCH]` runs `.github/workflows/release.yml` on GitHub's `xcode-27`
 runner (Xcode 27.2). It runs `make build test`, archives the app signed with Developer ID, notarizes
-and staples it, and attaches `Mirrorup-<version>.zip` to a GitHub release with generated notes. The
-version comes from the tag (`MARKETING_VERSION`), the app's build number from the workflow run number
-(`CURRENT_PROJECT_VERSION`), the extension's from its own history (above; the checkout fetches the
-full history for it). Installed apps replace the extension only when that number changes.
+and staples it, and attaches `Mirrorup-<version>.zip` and a Sparkle `appcast.xml` to a GitHub release
+with generated notes. The version comes from the tag (`MARKETING_VERSION`), the app's build number
+from the workflow run number (`CURRENT_PROJECT_VERSION`), the extension's from its own history
+(above; the checkout fetches the full history for it). Installed apps replace the extension only
+when that number changes.
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v1.1.0 && git push origin v1.1.0
 ```
+
+### Updates
+
+Release builds update themselves with [Sparkle](https://sparkle-project.org) (`Updater.swift`, the
+app's only third-party dependency). Sparkle checks daily and on "Check for Updates…" in the popover's
+⋯ menu; installing always takes the user's click. The feed (`UPDATE_FEED_URL` in `project.yml`) is
+`releases/latest/download/appcast.xml`, which GitHub serves from the newest release that is not a
+pre-release: never mark a release as pre-release, or installed apps won't see it. The appcast lists
+only its own release; Sparkle compares its `sparkle:version` (the run number) with the installed
+app's `CFBundleVersion`, so the run number must keep increasing (don't rename or recreate the
+workflow). Debug builds never start the updater.
+
+Each update is signed with an EdDSA key on top of Apple's signature. The public key is
+`UPDATE_PUBLIC_KEY` in `project.yml`; the private key is the `SPARKLE_ED_PRIVATE_KEY` secret (base64
+of the 32-byte Ed25519 seed, the format of Sparkle's `generate_keys -x`). Keep a copy in a password
+manager: without it no installed copy can be updated again, short of a manual reinstall.
 
 One-time setup (Apple Developer Program account holder or admin):
 
@@ -130,6 +147,7 @@ One-time setup (Apple Developer Program account holder or admin):
    base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set NOTARY_API_KEY
    gh secret set NOTARY_API_KEY_ID
    gh secret set NOTARY_API_ISSUER_ID
+   gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle-private-key.txt   # see "Updates" above
    ```
 
 The workflow signs manually: it passes the profile's name as `MIRRORUP_APP_PROFILE`, which the app
