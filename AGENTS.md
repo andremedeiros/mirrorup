@@ -99,7 +99,9 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
   waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded at 60 s, cancellable) and
   reports it as `PTPPreparation.indexingStorage`; the engine shows `.preparing(.readingStorage)`
   and swaps the 10 s connect deadline for `preparationTimeout` (90 s) meanwhile, so a cold start
-  connects in one session instead of timing out and reconnecting. Every surface that shows this
+  connects in one session instead of timing out and reconnecting. Waits shorter than 1 s are not
+  reported (`PTPPreparationReporter` grace): the catalog looks incomplete for a few ms right after
+  the session opens even on a warm start, and an SL2's small card took 0.43 s. Every surface that shows this
   wait (popover, CLI, docs) also shows `CameraPreparation.explanation`: users read "memory card"
   as the app reading their photos, and Mirrorup copies none (only a Take Photo shot).
 - A cancelled pass-through request must not fail the session: a capture stop lands during a
