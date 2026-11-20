@@ -12,14 +12,56 @@ func testConfiguration(
     initialDelay: Duration = .milliseconds(20),
     maxDelay: Duration = .milliseconds(100),
     maxAttempts: Int? = nil,
-    stallTimeout: Duration = .seconds(5)
+    stallTimeout: Duration = .seconds(5),
+    cameraRecheckInterval: Duration = .milliseconds(100)
 ) -> CaptureConfiguration {
     CaptureConfiguration(
         output: testOutput,
         recovery: RecoveryPolicy(initialDelay: initialDelay, maxDelay: maxDelay, maxAttemptsBeforeFailing: maxAttempts),
         stallTimeout: stallTimeout,
-        operationTimeout: .seconds(5)
+        operationTimeout: .seconds(5),
+        cameraRecheckInterval: cameraRecheckInterval
     )
+}
+
+/// Camera arrivals the test triggers with `arrive()`.
+final class TestArrivals: CameraArrivals {
+    private struct State {
+        var count: UInt64 = 0
+        var waiters: [UInt64: CheckedContinuation<Void, Never>] = [:]
+        var nextWaiter: UInt64 = 0
+    }
+    private let state = Mutex(State())
+
+    var arrivalCount: UInt64 { get async { state.withLock { $0.count } } }
+
+    func waitForArrival(after count: UInt64) async {
+        let id = state.withLock { s -> UInt64 in
+            s.nextWaiter += 1
+            return s.nextWaiter
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                let resumeNow = state.withLock { s -> Bool in
+                    if s.count > count || Task.isCancelled { return true }
+                    s.waiters[id] = cont
+                    return false
+                }
+                if resumeNow { cont.resume() }
+            }
+        } onCancel: {
+            state.withLock { $0.waiters.removeValue(forKey: id) }?.resume()
+        }
+    }
+
+    func arrive() {
+        let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.count += 1
+            defer { s.waiters.removeAll() }
+            return Array(s.waiters.values)
+        }
+        for waiter in waiters { waiter.resume() }
+    }
 }
 
 func syntheticConfiguration(frameRate: Int = 60) -> SyntheticCamera.Configuration {

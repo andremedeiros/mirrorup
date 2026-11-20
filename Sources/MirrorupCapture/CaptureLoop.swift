@@ -1,11 +1,13 @@
 import MirrorupDiagnostics
 import Synchronization
 
-/// One capture run: discover -> connect -> live view -> frames, with recovery between sessions.
+/// One capture run: discover -> connect -> live view -> frames, with recovery between sessions, and
+/// a wait for a camera (no backoff, no attempt counted) while none is attached.
 /// Runs off the engine actor so decoding never blocks status queries or `stop()`.
 struct CaptureLoop: Sendable {
     let configuration: CaptureConfiguration
     let makeBackend: @Sendable () async throws(CameraError) -> any CameraBackend
+    let arrivals: (any CameraArrivals)?
     let core: CaptureCore
     let frames: LatestFrameBuffer
     let generation: UInt64
@@ -17,19 +19,39 @@ struct CaptureLoop: Sendable {
         var random = SystemRandomNumberGenerator()
 
         while !Task.isCancelled {
+            // Read before discovery, so a camera that appears while discovery gives up is not missed.
+            let arrivalsBefore = await arrivals?.arrivalCount
             let error = await runSession(decoder: decoder)
             guard !Task.isCancelled, let transition = core.apply(.failed(error), generation: generation) else { return }
-            guard case .recovering(let attempt, _) = transition.to else {
+            switch transition.to {
+            case .recovering(let attempt, _):
+                let delay = configuration.recovery.delay(forAttempt: attempt, using: &random)
+                Diagnostics.capture.info("Retrying in \(delay.milliseconds, format: .fixed(precision: 0)) ms")
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+            case .waitingForCamera:
+                await waitForCamera(arrivalsBefore: arrivalsBefore)
+                if Task.isCancelled { return }
+            default:
                 return // failed (user must act) or cancelled by the backend
             }
-            let delay = configuration.recovery.delay(forAttempt: attempt, using: &random)
-            Diagnostics.capture.info("Retrying in \(delay.milliseconds, format: .fixed(precision: 0)) ms")
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                return
-            }
             guard core.apply(.retry, generation: generation) != nil else { return }
+        }
+    }
+
+    /// Returns when a camera appears (`arrivals`), after `cameraRecheckInterval`, or on cancellation.
+    private func waitForCamera(arrivalsBefore: UInt64?) async {
+        let recheck = configuration.cameraRecheckInterval
+        await withTaskGroup(of: Void.self) { group in
+            if let arrivals, let arrivalsBefore {
+                group.addTask { await arrivals.waitForArrival(after: arrivalsBefore) }
+            }
+            group.addTask { try? await Task.sleep(for: recheck) }
+            await group.next()
+            group.cancelAll()
         }
     }
 

@@ -1,4 +1,5 @@
 import ImageCaptureCore
+public import MirrorupCapture
 import MirrorupDiagnostics
 import MirrorupImageCapture
 import MirrorupUSB
@@ -20,6 +21,25 @@ public enum CameraDiscovery {
             return await MainActor.run { ImageCaptureBrowser.shared.devices.map(DiscoveredCamera.init(imageCapture:)) }
         case .usb:
             return usbCameras()
+        }
+    }
+
+    /// When cameras appear on `transport`, for `CaptureEngine(arrivals:)`; nil for USB, which reports
+    /// no arrivals (the engine then re-checks on an interval).
+    public static func arrivals(on transport: CameraTransport) -> (any CameraArrivals)? {
+        switch transport {
+        case .imageCapture: ImageCaptureArrivals()
+        case .usb: nil
+        }
+    }
+
+    private struct ImageCaptureArrivals: CameraArrivals {
+        var arrivalCount: UInt64 {
+            get async { await ImageCaptureBrowser.shared.arrivalCount }
+        }
+
+        func waitForArrival(after count: UInt64) async {
+            await ImageCaptureBrowser.shared.waitForArrival(after: count)
         }
     }
 
