@@ -463,7 +463,9 @@ struct CaptureEngineTests {
         deadline.preparationFinished()
         try await sleeper.value
         let waited = ContinuousClock.now - started
-        #expect(waited < .milliseconds(100) + ConnectDeadline.recheckInterval + .milliseconds(300), "waited \(waited)")
+        // The sleeper started with a 30 s deadline; waking within seconds proves it saw the earlier
+        // one. A bound near the 250 ms recheck interval flakes on a loaded CI runner (1.26 s seen).
+        #expect(waited < .seconds(5), "waited \(waited)")
     }
 
     @Test func deadlineCancelsTheLoser() async throws {
