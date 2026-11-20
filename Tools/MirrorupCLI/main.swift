@@ -23,10 +23,11 @@ let usage = """
                                       evf-NAME.bin); the serial number is zeroed unless
                                       --keep-serial
       liveview snapshot --output F    save one live-view JPEG frame to F and its metadata to F.json
-      liveview benchmark [--duration S] [--no-decode] [--enhance] [--json F]
+      liveview benchmark [--duration S] [--no-decode] [--enhance] [--camera-screen] [--json F]
                                       stream live view for S seconds (default 60) and report
                                       measured throughput and timing distributions; --enhance
-                                      adds the super-resolution scaler to the decode stage
+                                      adds the super-resolution scaler to the decode stage;
+                                      --camera-screen keeps live view on the camera's own screen
 
     options:
       --transport imagecapture|usb    PTP transport (default imagecapture; usb needs the PTP
@@ -49,7 +50,7 @@ struct Arguments {
             let a = args[i]
             if a.hasPrefix("--") {
                 let name = String(a.dropFirst(2))
-                if ["no-decode", "enhance", "keep-serial", "help"].contains(name) {
+                if ["no-decode", "enhance", "camera-screen", "keep-serial", "help"].contains(name) {
                     flags.insert(name)
                 } else {
                     guard i + 1 < args.count else { throw CLIError("missing value for \(a)") }
@@ -99,7 +100,8 @@ enum MirrorupCLI {
                 let duration = Double(args.options["duration"] ?? "60") ?? 60
                 try await Benchmark.run(
                     duration: .milliseconds(Int(duration * 1000)), decode: !args.flags.contains("no-decode"),
-                    enhance: args.flags.contains("enhance"), jsonPath: args.options["json"], transport: args.transport())
+                    enhance: args.flags.contains("enhance"), cameraScreen: args.flags.contains("camera-screen"),
+                    jsonPath: args.options["json"], transport: args.transport())
             default:
                 throw CLIError("unknown command '\(args.positional.joined(separator: " "))'\n\n\(usage)")
             }

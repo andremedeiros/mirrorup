@@ -6,7 +6,7 @@ import MirrorupDiagnostics
 
 /// Canon EOS live-view backend. Owns the PTP session and all Canon-specific state; serializes
 /// device access by being an actor (and through `PTPSession`'s transaction gate).
-public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
+public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, CameraScreenSharing {
     public struct Options: Sendable {
         /// Pause between GetViewfinderData polls while the camera answers "not ready".
         public var notReadyRetryInterval: Duration = .milliseconds(3)
@@ -57,6 +57,8 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
     private var keepAliveRequested = false
     /// Set when live view was re-armed after the body left PC output; cleared by the next frame.
     private var rearmedSinceLastFrame = false
+    /// The user's choice to keep live view on the rear LCD while it streams to the PC.
+    private var showsLiveViewOnCamera = false
     /// Re-arms before this session's first frame (`Options.startupRearmLimit`).
     private var startupRearms = 0
     /// Set when the body echoes EVFOutputDevice with the PC bit after our latest write: a later drop
@@ -278,8 +280,8 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
                     throw PTPError.response(r.response.code, operation: CanonOperation.setDevicePropValueEx)
                 }
             }
-            if savedOutput & CanonProperty.evfOutputPC == 0 {
-                try await setEVFOutput(CanonProperty.evfOutputPC)
+            if savedOutput & CanonProperty.evfOutputRouting != liveViewOutput {
+                try await applyLiveViewOutput()
             }
             if let info = deviceInfo, info.supports(CanonOperation.initiateViewfinder) {
                 try await session.execute(PTPCommand(CanonOperation.initiateViewfinder), timeout: options.commandTimeout)
@@ -424,7 +426,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
                         startupRearms += 1
                         lastFrameTime = .now
                     }
-                    try await setEVFOutput(output | CanonProperty.evfOutputPC)
+                    try await applyLiveViewOutput()
                 }
             }
         }
@@ -445,6 +447,35 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
             PTPCommand(CanonOperation.setDevicePropValueEx),
             dataOut: CanonPropertyEncoding.integerPayload(property: CanonProperty.evfOutputDevice, value: value),
             timeout: options.commandTimeout)
+    }
+
+    /// EVFOutputDevice while streaming: the PC, plus the rear LCD when the user asked for it.
+    private var liveViewOutput: UInt32 {
+        CanonProperty.evfOutputPC | (showsLiveViewOnCamera ? CanonProperty.evfOutputTFT : 0)
+    }
+
+    /// Writes `liveViewOutput`. A body that refuses the rear LCD next to the PC streams to the PC only
+    /// (the SL2 accepts 0x3; docs/canon-eos-ptp.md §3.1).
+    private func applyLiveViewOutput() async throws(PTPError) {
+        let wanted = liveViewOutput
+        do {
+            try await setEVFOutput(wanted)
+        } catch {
+            guard wanted != CanonProperty.evfOutputPC, case .response(let code, _) = error else { throw error }
+            Diagnostics.canon.notice("EVFOutputDevice=0x\(String(wanted, radix: 16), privacy: .public) refused (\(CanonResponse.describe(code), privacy: .public)); streaming to the PC only")
+            try await setEVFOutput(CanonProperty.evfOutputPC)
+        }
+    }
+
+    public func setShowsLiveViewOnCamera(_ shows: Bool) async throws(CameraError) {
+        showsLiveViewOnCamera = shows
+        guard case .liveView = state else { return }
+        do {
+            try await applyLiveViewOutput()
+            try await drainEvents()
+        } catch {
+            throw Self.map(error, context: shows ? "show live view on the rear LCD" : "hide live view on the rear LCD")
+        }
     }
 
     /// GetEvent until the camera reports nothing new (bounded).

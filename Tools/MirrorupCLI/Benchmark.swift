@@ -20,6 +20,8 @@ enum Benchmark {
         var meanFrameBytes: Int
         /// Whether frames went through the super-resolution scaler (`--enhance`), not merely requested.
         var enhanced: Bool
+        /// Whether live view was also kept on the camera's own screen (`--camera-screen`).
+        var cameraScreen: Bool
         var sourceWidth: Int?
         var sourceHeight: Int?
         var acquisitionMs: Stats?
@@ -41,7 +43,7 @@ enum Benchmark {
         }
     }
 
-    static func run(duration: Duration, decode: Bool, enhance: Bool, jsonPath: String?,
+    static func run(duration: Duration, decode: Bool, enhance: Bool, cameraScreen: Bool, jsonPath: String?,
                     transport: CameraTransport) async throws {
         if enhance && !FrameDecoder.isEnhanceSupported {
             throw CLIError("--enhance needs Apple silicon with macOS 26's super-resolution scaler")
@@ -63,7 +65,13 @@ enum Benchmark {
         do {
             try await camera.connect(progress: PreparationNotice.camera)
             let identity = await camera.identity
-            print("benchmarking \(identity.model ?? identity.name) via \(identity.transport) for \(duration) (decode: \(decode ? "on" : "off"), enhance: \(enhance ? "on" : "off"))")
+            print("benchmarking \(identity.model ?? identity.name) via \(identity.transport) for \(duration) (decode: \(decode ? "on" : "off"), enhance: \(enhance ? "on" : "off"), camera screen: \(cameraScreen ? "on" : "off"))")
+            if cameraScreen {
+                guard let screen = camera as? any CameraScreenSharing else {
+                    throw CLIError("this camera can't keep live view on its own screen")
+                }
+                try await screen.setShowsLiveViewOnCamera(true)
+            }
             let resourcesStart = ProcessResources.snapshot()
             let armStart = ContinuousClock.now
             try await camera.startLiveView()
@@ -130,6 +138,7 @@ enum Benchmark {
                 invalidFrames: stats.invalidPayloads,
                 meanFrameBytes: frames > 0 ? bytes / frames : 0,
                 enhanced: enhanced,
+                cameraScreen: cameraScreen,
                 sourceWidth: sourceSize?.0,
                 sourceHeight: sourceSize?.1,
                 acquisitionMs: Stats(acquisition.summary()),

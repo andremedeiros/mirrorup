@@ -197,3 +197,12 @@ public protocol LiveViewPolling: Sendable {
 public protocol RawPayloadRecording: Sendable {
     var rawPayloads: [String: Data] { get async }
 }
+
+/// Optional capability of a `CameraBackend` whose camera can keep showing live view on its own
+/// screen while it streams to the Mac. The capture loop applies the engine's preference before every
+/// `startLiveView` and again whenever it changes while streaming.
+public protocol CameraScreenSharing: Sendable {
+    /// Takes effect at the next `startLiveView`, and right away while live view runs. A camera that
+    /// refuses its screen keeps streaming to the Mac; only a failure to reach the camera throws.
+    func setShowsLiveViewOnCamera(_ shows: Bool) async throws(CameraError)
+}

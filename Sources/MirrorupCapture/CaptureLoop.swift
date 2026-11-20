@@ -94,12 +94,20 @@ struct CaptureLoop: Sendable {
             core.setCamera(await backend.identity, generation: generation)
 
             liveViewRequested = true
+            // The only writer of the camera-screen preference to the camera, so a toggle can't race a connect.
+            let screen = backend as? any CameraScreenSharing
+            let showsOnCamera = core.showsLiveViewOnCamera
+            if let screen {
+                try await withDeadline(after: configuration.operationTimeout, "setShowsLiveViewOnCamera") { () throws(CameraError) in
+                    try await screen.setShowsLiveViewOnCamera(showsOnCamera)
+                }
+            }
             try await withDeadline(after: configuration.operationTimeout, "startLiveView") { () throws(CameraError) in
                 try await backend.startLiveView()
             }
             core.apply(.liveViewStarted, generation: generation)
 
-            try await stream(from: backend, decoder: decoder)
+            try await stream(from: backend, screen: screen, showsOnCamera: showsOnCamera, decoder: decoder)
         } catch {
             sessionError = error
         }
@@ -108,16 +116,27 @@ struct CaptureLoop: Sendable {
         return Task.isCancelled ? .cancellation : sessionError
     }
 
-    /// Pulls, decodes and publishes frames until an error that is not a skippable frame.
-    private func stream(from backend: any CameraBackend, decoder: FrameDecoder) async throws(CameraError) -> Never {
+    /// Pulls, decodes and publishes frames until an error that is not a skippable frame. Applies a
+    /// changed camera-screen preference before the next frame.
+    private func stream(
+        from backend: any CameraBackend, screen: (any CameraScreenSharing)?, showsOnCamera: Bool, decoder: FrameDecoder
+    ) async throws(CameraError) -> Never {
         core.beginSession()
         let stallTimeout = configuration.stallTimeout
         // The watchdog measures time since the last *valid* frame, so a camera that only sends
         // garbage is reconnected just like one that sends nothing.
         var lastValidFrame = ContinuousClock.now
         var publishedAny = false
+        var appliedShowsOnCamera = showsOnCamera
         while true {
             if Task.isCancelled { throw .cancellation }
+            if let screen, core.showsLiveViewOnCamera != appliedShowsOnCamera {
+                let wanted = !appliedShowsOnCamera
+                try await withDeadline(after: configuration.operationTimeout, "setShowsLiveViewOnCamera") { () throws(CameraError) in
+                    try await screen.setShowsLiveViewOnCamera(wanted)
+                }
+                appliedShowsOnCamera = wanted
+            }
             let frame: CameraFrame
             do {
                 frame = try await withDeadline(lastValidFrame + stallTimeout, "nextFrame") { () throws(CameraError) in

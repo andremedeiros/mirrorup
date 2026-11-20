@@ -21,6 +21,8 @@ public enum CanonProperty {
 
     public static let evfOutputTFT: UInt32 = 0x1
     public static let evfOutputPC: UInt32 = 0x2
+    /// The bits live view decides: where the picture goes (rear LCD, PC).
+    public static let evfOutputRouting: UInt32 = evfOutputTFT | evfOutputPC
 }
 
 /// A property value as reported by GetEvent PropValueChanged. Integer properties occupy a 4-byte

@@ -268,7 +268,8 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         try await camera.connect()
         try await camera.startLiveView()
         _ = try await camera.nextFrame()
-        // User opens the menu: body reports EVFOutputDevice back to TFT only.
+        // User opens the menu: body reports EVFOutputDevice back to TFT only. Re-arming restores the
+        // user's routing (PC only by default), not whatever the body switched to.
         sim.state.withLock { s in
             s.evfOutput = 1
             var w = PTPDataWriter()
@@ -276,7 +277,7 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
             s.pendingEvents.append(w.data)
         }
         _ = try await camera.nextFrame()
-        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 3])
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2])
     }
 
     /// Observed on the SL2: while powering down it keeps reporting EVFOutputDevice=0. Live view must
@@ -350,8 +351,8 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         let start = ContinuousClock.now
         await #expect(throws: CameraError.self) { _ = try await camera.nextFrame() }
         #expect(ContinuousClock.now - start < .seconds(1))
-        // The cache still holds the idle rear-LCD value (0x1), so the single re-arm writes 0x1 | PC.
-        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 3])
+        // One re-arm, writing the user's routing (PC only by default), not the cached idle value | PC.
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2])
     }
 
     @Test func savedOutputOfZeroRestoresRearLCD() async throws {
@@ -368,7 +369,7 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
     }
 
     /// A previous host died mid-stream and left the PC bit set (observed as 0x3 on the SL2): start
-    /// must not write, and stop must still hand output back to the rear LCD.
+    /// routes live view as the user chose (PC only by default), and stop hands it back to the rear LCD.
     @Test func leftoverPCOutputIsClearedOnStop() async throws {
         let (camera, sim) = try makeCamera()
         sim.state.withLock { s in
@@ -381,7 +382,35 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         try await camera.startLiveView()
         _ = try await camera.nextFrame()
         try await camera.stopLiveView()
-        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [1])
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 1])
+    }
+
+    /// Verified on the SL2 (docs/canon-eos-ptp.md §3.1): 0x3 streams to the PC and keeps the rear LCD on.
+    @Test func cameraScreenPreferenceRoutesLiveViewToRearLCDToo() async throws {
+        let (camera, sim) = try makeCamera()
+        try await camera.connect()
+        try await camera.setShowsLiveViewOnCamera(true)
+        #expect(sim.state.withLock { $0.propertyWrites.isEmpty })  // applied when live view starts
+        try await camera.startLiveView()
+        _ = try await camera.nextFrame()
+        try await camera.setShowsLiveViewOnCamera(false)
+        _ = try await camera.nextFrame()
+        try await camera.setShowsLiveViewOnCamera(true)
+        _ = try await camera.nextFrame()
+        try await camera.stopLiveView()
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [3, 2, 3, 1])
+    }
+
+    @Test func bodyRefusingRearLCDAndPCStillStreamsToPC() async throws {
+        let (camera, sim) = try makeCamera()
+        try await camera.connect()
+        try await camera.setShowsLiveViewOnCamera(true)
+        sim.state.withLock { $0.refusals[0x9110] = 0x2005 }
+        try await camera.startLiveView()
+        _ = try await camera.nextFrame()
+        let s = sim.state.withLock { $0 }
+        #expect(s.commands.filter { $0.0 == 0x9110 }.count == 2)
+        #expect(s.propertyWrites.map(\.1) == [2])
     }
 
     /// Every property the camera reports ends up in the metadata: none dropped, magic values decoded.

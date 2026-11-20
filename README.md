@@ -85,8 +85,10 @@ streaming switch, the camera's current lens and exposure, and camera controls:
   there, with a square that turns green on a lock or yellow when the camera can't lock.
 - **Brightness** (exposure compensation), white balance, Picture Style, ISO, focus mode,
   aperture/shutter when the mode allows them, live-view zoom (1×/5×, click to move the zoomed area),
-  Mirror / Upside Down, and **Enhance** (Apple silicon): sharpens the picture with Apple's
-  machine-learning upscaler at the cost of about 12 ms more latency per frame.
+  Mirror / Upside Down, **Enhance** (Apple silicon): sharpens the picture with Apple's
+  machine-learning upscaler at the cost of about 12 ms more latency per frame, and **Show on Camera
+  Screen**: keeps the picture on the camera's own screen while streaming (off by default; it uses
+  more of the camera's battery).
 - **Battery** level and **Take Photo**: a full-resolution photo, saved to Pictures › Mirrorup (it
   also stays on the camera's card). That photo is the only file Mirrorup ever copies from the
   camera; it doesn't read, copy or upload anything else on the card.

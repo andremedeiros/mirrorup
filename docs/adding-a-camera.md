@@ -81,6 +81,9 @@ Optional capabilities, discovered with `as?`:
   camera's own code and a title such as "5.9×"), and put any "change this on the camera to unlock
   more" sentence in `hint`.
 - `LiveViewPolling`: poll counters for `mirrorup liveview benchmark`.
+- `CameraScreenSharing`: keep live view on the camera's own screen while streaming (the app's Show
+  on Camera Screen). Adopt it only if the body can do both at once; if it refuses, keep streaming to
+  the Mac and throw only when the camera can't be reached.
 
 ## 4. Tests and evidence
 
