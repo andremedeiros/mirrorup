@@ -572,6 +572,8 @@ final class AppModel {
     enum Phase: Equatable {
         case off
         case connecting
+        /// The camera is busy before it can stream (e.g. its memory card is being read).
+        case preparing(CameraPreparation)
         case live
         case reconnecting(reason: String?)
         case unavailable(message: String)
@@ -664,6 +666,9 @@ final class AppModel {
                 newPhase = .unavailable(message: error.message)
             case .recovering:
                 newPhase = .reconnecting(reason: status.lastRecoverableError?.message)
+            case .preparing(let preparation):
+                // Even during a recovery: it can take 20 s, and nothing is wrong meanwhile.
+                newPhase = .preparing(preparation)
             case .idle, .discovering, .connecting, .initializing, .ready:
                 // Stay "reconnecting" through the intermediate states of a recovery so the UI
                 // doesn't flicker; a fresh start shows "connecting".
@@ -700,7 +705,7 @@ final class AppModel {
         case .off: .stopped
         case .live: sinkState == .connected ? .streamingToVirtualCamera : .streaming
         case .unavailable: .failed
-        case .connecting, .reconnecting: .working
+        case .connecting, .preparing, .reconnecting: .working
         }
     }
 }

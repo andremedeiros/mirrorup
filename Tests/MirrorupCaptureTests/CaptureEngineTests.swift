@@ -372,6 +372,100 @@ struct CaptureEngineTests {
         #expect(await engine.status.state == .idle)
     }
 
+    /// A camera that is busy longer than the connect deadline (a card being indexed on a cold
+    /// attach) streams in one session, without a recovery.
+    @Test func preparationLongerThanTheConnectDeadlineDoesNotRecover() async throws {
+        var configuration = syntheticConfiguration()
+        configuration.preparation = .init(duration: .seconds(1), steps: 4)
+        configuration.connectDelay = .milliseconds(150)
+        let camera = SyntheticCamera(configuration: configuration)
+        let engine = CaptureEngine(configuration: preparationConfiguration(preparationTimeout: .seconds(10))) { camera }
+        let recorder = StateRecorder()
+        let observing = recorder.start(engine)
+        defer { observing.cancel() }
+
+        await engine.start()
+        let status = try await waitForStatus(engine, "streaming") { $0.state == .streaming }
+        #expect(status.reconnectCount == 0 && status.metrics.recoveryAttempts == 0)
+        #expect(await camera.connectAttempts == 1)
+        let observed = recorder.observed
+        #expect(observed.contains { if case .preparing = $0 { true } else { false } })
+        #expect(!observed.contains { if case .recovering = $0 { true } else { false } })
+        let afterPreparing = observed.drop { if case .preparing = $0 { false } else { true } }
+            .drop { if case .preparing = $0 { true } else { false } }
+        #expect(Array(afterPreparing.prefix(4)) == [.connecting, .initializing, .ready, .streaming])
+        await engine.stop()
+    }
+
+    @Test func preparationLongerThanThePreparationTimeoutRecovers() async throws {
+        var configuration = syntheticConfiguration()
+        configuration.preparation = .init(duration: .seconds(30), steps: 30)
+        let camera = SyntheticCamera(configuration: configuration)
+        let engine = CaptureEngine(configuration: preparationConfiguration(preparationTimeout: .milliseconds(400))) { camera }
+        await engine.start()
+        let status = try await waitForStatus(engine, "recovering") {
+            if case .recovering = $0.state { true } else { false }
+        }
+        #expect(status.lastRecoverableError?.kind == .timeout)
+        #expect(status.lastRecoverableError?.message == "The camera took too long to get ready: macOS was still listing the files on its memory card.")
+        await engine.stop()
+    }
+
+    @Test func stopWhilePreparingIsPrompt() async throws {
+        var configuration = syntheticConfiguration()
+        configuration.preparation = .init(duration: .seconds(30), steps: 3)
+        let camera = SyntheticCamera(configuration: configuration)
+        let engine = CaptureEngine(configuration: preparationConfiguration(preparationTimeout: .seconds(60))) { camera }
+        await engine.start()
+        try await waitForStatus(engine, "preparing") { if case .preparing = $0.state { true } else { false } }
+        let duration = await elapsed { await engine.stop() }
+        #expect(duration < promptStop, "stop took \(duration)")
+        #expect(await engine.status.state == .idle)
+        #expect(await !engine.hasLoop)
+    }
+
+    private func preparationConfiguration(preparationTimeout: Duration) -> CaptureConfiguration {
+        CaptureConfiguration(
+            output: testOutput,
+            recovery: RecoveryPolicy(initialDelay: .milliseconds(20), maxDelay: .milliseconds(100)),
+            operationTimeout: .milliseconds(300),
+            preparationTimeout: preparationTimeout
+        )
+    }
+
+    @Test func connectDeadlineFollowsThePreparation() {
+        let start = ContinuousClock.now
+        let deadline = ConnectDeadline(operationTimeout: .seconds(10), preparationTimeout: .seconds(90), now: start)
+        #expect(deadline.instant == start + .seconds(10))
+        #expect(deadline.timeoutError().message == "The camera did not respond in time.")
+
+        deadline.preparing(.readingStorage(percentComplete: 0), now: start + .seconds(2))
+        #expect(deadline.instant == start + .seconds(92))
+        // Progress does not push the bound further: it counts from the first report.
+        deadline.preparing(.readingStorage(percentComplete: 50), now: start + .seconds(30))
+        #expect(deadline.instant == start + .seconds(92))
+        #expect(deadline.timeoutError().message == "The camera took too long to get ready: macOS was still listing the files on its memory card.")
+
+        deadline.preparationFinished(now: start + .seconds(40))
+        #expect(deadline.instant == start + .seconds(50))
+        #expect(deadline.timeoutError().message == "The camera did not respond in time.")
+        // A second "finished" changes nothing.
+        deadline.preparationFinished(now: start + .seconds(45))
+        #expect(deadline.instant == start + .seconds(50))
+    }
+
+    @Test func connectDeadlineMovedEarlierWakesTheSleeper() async throws {
+        let deadline = ConnectDeadline(operationTimeout: .milliseconds(50), preparationTimeout: .seconds(30))
+        deadline.preparing(.readingStorage(percentComplete: nil))
+        let started = ContinuousClock.now
+        let sleeper = Task { try await deadline.sleepUntilPassed() }
+        try await Task.sleep(for: .milliseconds(100))
+        deadline.preparationFinished()
+        try await sleeper.value
+        let waited = ContinuousClock.now - started
+        #expect(waited < .milliseconds(100) + ConnectDeadline.recheckInterval + .milliseconds(300), "waited \(waited)")
+    }
+
     @Test func deadlineCancelsTheLoser() async throws {
         let started = ContinuousClock.now
         do {

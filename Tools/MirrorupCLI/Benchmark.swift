@@ -61,7 +61,7 @@ enum Benchmark {
         var enhanced = false
 
         do {
-            try await camera.connect()
+            try await camera.connect(progress: PreparationNotice.camera)
             let identity = await camera.identity
             print("benchmarking \(identity.model ?? identity.name) via \(identity.transport) for \(duration) (decode: \(decode ? "on" : "off"), enhance: \(enhance ? "on" : "off"))")
             let resourcesStart = ProcessResources.snapshot()

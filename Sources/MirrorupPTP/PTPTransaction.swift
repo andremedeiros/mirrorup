@@ -19,11 +19,31 @@ public enum PTPSessionOwnership: Sendable {
 public protocol PTPTransport: Sendable {
     var sessionOwnership: PTPSessionOwnership { get }
     func open() async throws(PTPTransportError)
+    /// Opens the transport like `open()`, reporting through `preparation` while the device (or the
+    /// system service in front of it) is busy and cannot take commands yet, and `nil` once that
+    /// wait is over. Reports nothing when the device is ready at once. Defaults to `open()`.
+    func open(preparation: @escaping PTPPreparationHandler) async throws(PTPTransportError)
     func execute(
         _ command: PTPCommand, transactionID: UInt32, dataOut: Data?, timeout: Duration
     ) async throws(PTPError) -> PTPTransactionResult
     func close() async
 }
+
+extension PTPTransport {
+    public func open(preparation: @escaping PTPPreparationHandler) async throws(PTPTransportError) {
+        try await open()
+    }
+}
+
+/// Why a device cannot take PTP commands yet, though nothing is wrong.
+public enum PTPPreparation: Sendable, Equatable {
+    /// The device or the system's camera service is indexing the device's storage.
+    /// `percentComplete` is nil when unknown.
+    case indexingStorage(percentComplete: Int?)
+}
+
+/// Receives preparation reports while a transport opens; `nil` means the preparation is over.
+public typealias PTPPreparationHandler = @Sendable (PTPPreparation?) -> Void
 
 /// A pair of bulk endpoints (or a fake of them). One `read` is one USB transfer: it returns whatever
 /// arrived up to `maxLength`, which can be less than a container, exactly one container, or (on

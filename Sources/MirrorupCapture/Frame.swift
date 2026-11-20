@@ -115,6 +115,11 @@ public protocol CameraBackend: Sendable {
 
     /// Establishes the session and performs camera initialization. Idempotent once connected.
     func connect() async throws(CameraError)
+    /// `connect()`, reporting through `progress` while the camera is busy and cannot take commands
+    /// yet (e.g. while its memory card is indexed), and `nil` once it is done. The engine shows the
+    /// state and gives such a wait `CaptureConfiguration.preparationTimeout` instead of the usual
+    /// connect deadline. Report nothing when the camera is ready at once. Defaults to `connect()`.
+    func connect(progress: @escaping @Sendable (CameraPreparation?) -> Void) async throws(CameraError)
     func startLiveView() async throws(CameraError)
     /// Waits for and returns the next frame. Never returns the same frame twice.
     func nextFrame() async throws(CameraError) -> CameraFrame
@@ -135,6 +140,10 @@ public protocol CameraBackend: Sendable {
 
 extension CameraBackend {
     public var lastFramePause: ContinuousClock.Instant? { get async { nil } }
+
+    public func connect(progress: @escaping @Sendable (CameraPreparation?) -> Void) async throws(CameraError) {
+        try await connect()
+    }
 }
 
 /// A decoded frame ready for display or publication. Pixel buffers are IOSurface-backed so they can

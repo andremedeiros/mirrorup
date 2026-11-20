@@ -120,7 +120,11 @@ final class CaptureCore: Sendable {
                 }
                 state.recoveryStartedAt = nil
             }
-            if transition.from != transition.to {
+            if case .preparing = transition.from, case .preparing = transition.to {
+                // Progress within one preparation: throttled like metrics; the end is always broadcast.
+                Diagnostics.capture.debug("Capture state: \(String(describing: transition.to), privacy: .public)")
+                broadcastIfDue(&state, now: now)
+            } else if transition.from != transition.to {
                 Diagnostics.capture.info("Capture state: \(String(describing: transition.to), privacy: .public)")
                 broadcast(&state, now: now)
             } else {

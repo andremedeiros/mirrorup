@@ -171,9 +171,13 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording {
     // MARK: Connection
 
     public func connect() async throws(CameraError) {
+        try await connect(progress: { _ in })
+    }
+
+    public func connect(progress: @escaping @Sendable (CameraPreparation?) -> Void) async throws(CameraError) {
         guard case .disconnected = state else { return }
         do {
-            try await session.open()
+            try await session.open(preparation: { progress($0.map(CameraPreparation.init(ptp:))) })
             let info = try await session.deviceInfo()
             deviceInfo = info
             try Self.validate(info)

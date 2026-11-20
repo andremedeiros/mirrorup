@@ -130,11 +130,16 @@ stateDiagram-v2
     [*] --> idle
     idle --> discovering: start()
     discovering --> connecting: backend created
+    connecting --> preparing: camera busy (e.g. card being read)
+    preparing --> preparing: progress
+    preparing --> connecting: preparation finished
+    preparing --> initializing: connected
     connecting --> initializing: connected
     initializing --> ready: live view armed
     ready --> streaming: first frame published
     discovering --> recovering: failure
     connecting --> recovering: failure
+    preparing --> recovering: failure / preparationTimeout
     initializing --> recovering: failure
     ready --> recovering: failure
     streaming --> recovering: disconnect / timeout / stall / protocol error
@@ -146,6 +151,11 @@ stateDiagram-v2
     streaming --> idle: stop()
     recovering --> idle: stop()
 ```
+
+`preparing` is not a failure: a backend reports it through `connect(progress:)` while the camera
+cannot take commands yet (ImageCaptureCore's content catalog on a cold attach), and the connect
+deadline becomes `preparationTimeout`, counted from the first report, until it reports `nil`; the
+rest of the connect then gets a fresh `operationTimeout`.
 
 Every transition goes through `CaptureStateMachine.handle(_:)`, a pure value-type reducer with a
 test per transition. There are no ad-hoc flags. Each engine run has a generation number, so late

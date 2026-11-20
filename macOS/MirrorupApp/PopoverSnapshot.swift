@@ -10,15 +10,20 @@ import SwiftUI
 ///     open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 ///
 /// The snapshot is taken 8 s after launch, once streaming and the control state have settled.
+/// `-MirrorupSnapshotDelay <seconds>` (at least 2) takes it later or earlier, e.g. to catch a
+/// camera that is still preparing.
 enum PopoverSnapshot {
     static let argument = "MirrorupSnapshotPopover"
+    static let delayArgument = "MirrorupSnapshotDelay"
 
     @MainActor
     static func scheduleIfRequested(model: AppModel, updater: Updater) {
         guard let path = UserDefaults.standard.string(forKey: argument) else { return }
-        Diagnostics.app.notice("Popover snapshot scheduled: \(path, privacy: .public)")
+        let requested = UserDefaults.standard.double(forKey: delayArgument)
+        let delay = requested >= 2 ? requested : 8
+        Diagnostics.app.notice("Popover snapshot scheduled in \(delay, privacy: .public) s: \(path, privacy: .public)")
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(6))
+            try? await Task.sleep(for: .seconds(delay - 2))
             await model.refreshCameraInfo()
             await model.refreshControls()
             try? await Task.sleep(for: .seconds(2))
