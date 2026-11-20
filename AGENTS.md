@@ -104,6 +104,10 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
   the session opens even on a warm start, and an SL2's small card took 0.43 s. Every surface that shows this
   wait (popover, CLI, docs) also shows `CameraPreparation.explanation`: users read "memory card"
   as the app reading their photos, and Mirrorup copies none (only a Take Photo shot).
+- Right after power-on the SL2 echoes `0xD1B0` = 2, then drops it back to 0 ~250 ms later, for each
+  write until it has settled (four writes, 1.8 s, on 2026-11-19); no event marks the end. One re-arm
+  is not enough: before the first frame the driver re-arms on every drop (bounded, only after an
+  echo), each with a fresh first-frame wait.
 - A cancelled pass-through request must not fail the session: a capture stop lands during a
   frame poll often (3 of 5 stops on a 7D), and teardown still has to restore `0xD1B0` and leave remote mode.
 - System extensions activate only from `/Applications`, and the user must approve them in

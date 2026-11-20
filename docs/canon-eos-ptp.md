@@ -407,6 +407,16 @@ The steps use the ImageCaptureCore pass-through; the ptpcamerad session is alrea
 5. First frame: poll `0x9153` as in §9.3, with a 3 s budget for the mirror flip. On timeout, stop
    and report. (**Ref**: 3 s budget)
 
+- **Right after power-on the SL2 drops PC output again.** It echoes `0xD1B0` = 2, then reports
+  `0xD1B0` = 0 about 250 ms later, and does the same to each rewrite until it has settled. No
+  CameraStatusChanged or other event marks the end. Two runs on 2026-11-19 (power switch ON, engine
+  already waiting): a single re-arm was dropped too and the 3 s budget forced a reconnect; with
+  re-arming on every drop the fourth rewrite stuck 1.8 s after the first write, and frames flowed
+  3.3 s after the camera appeared. (**Verified**) Mirrorup therefore re-arms on each drop before the
+  first frame, but only after the body echoed the write (a body that ignores it, like a 7D in movie
+  mode, §12, gets one re-arm), at most `startupRearmLimit` (8) times, each restarting the
+  first-frame budget.
+
 ### 9.3 Steady-state poll (one serial loop; PTP is half-duplex)
 
 ```
@@ -420,7 +430,8 @@ loop:
       if notReadyStreak exceeds about 3 s worth of tries: treat live view as lost and re-arm (9.2)
   else: fail (see errors)
   every ~250 ms: drain GetEvent; apply 0xC189 to cache; act per section 5.1
-      (0xD1B0 lost bit 1 -> rewrite 2; 0xC18D/0xC18E -> 0x911D now)
+      (0xD1B0 lost bit 1 -> rewrite 2: once per frame drought, or on every drop before the first
+      frame while the body is settling (9.2); 0xC18D/0xC18E -> 0x911D now)
   every 10 s, if 0x911D is listed: KeepDeviceOn 0x911D (ignore 0x2005)
 ```
 
