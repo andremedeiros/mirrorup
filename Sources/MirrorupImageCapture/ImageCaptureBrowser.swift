@@ -25,6 +25,9 @@ public final class ImageCaptureBrowser: NSObject {
     private var nextWaiter: UInt64 = 0
     private var removalHandlers: [ObjectIdentifier: [UInt64: @MainActor () -> Void]] = [:]
     private var nextRemovalToken: UInt64 = 0
+    /// Grows by one for every camera ImageCaptureCore reports, usable or not.
+    public private(set) var arrivalCount: UInt64 = 0
+    private var arrivalWaiters: [UInt64: CheckedContinuation<Void, Never>] = [:]
 
     override private init() {
         super.init()
@@ -78,6 +81,22 @@ public final class ImageCaptureBrowser: NSObject {
         return box?.value
     }
 
+    /// Returns once `arrivalCount` is greater than `count` (at once if it already is), or when the
+    /// calling task is cancelled. Starts the browser if needed.
+    public func waitForArrival(after count: UInt64) async {
+        start()
+        guard arrivalCount <= count else { return }
+        nextWaiter += 1
+        let id = nextWaiter
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                arrivalWaiters[id] = cont
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.arrivalWaiters.removeValue(forKey: id)?.resume() }
+        }
+    }
+
     /// Registers a callback for when `device` disappears. Returns a token for `removeRemovalHandler`.
     func onRemoval(of device: ICCameraDevice, _ handler: @escaping @MainActor () -> Void) -> UInt64 {
         nextRemovalToken += 1
@@ -103,6 +122,10 @@ extension ImageCaptureBrowser: @MainActor ICDeviceBrowserDelegate {
         for (id, predicate) in waiterPredicates where predicate(camera) {
             resolveWaiter(id, with: camera)
         }
+        arrivalCount += 1
+        let arrived = arrivalWaiters.values
+        arrivalWaiters.removeAll()
+        for waiter in arrived { waiter.resume() }
     }
 
     public func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {

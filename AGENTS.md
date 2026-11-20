@@ -98,7 +98,10 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
   10–24 s after `requestOpenSession`, and not only on a cold attach: every new process pays it
   again (23.8 s, 23.9 s on an attached, powered 7D), while later sessions in the same process are
   ready at once. `contentCatalogPercentCompleted` sits at 0 for ~9.5 s, then counts 1→100 in ~150 ms
-  steps (KVO works). Commands sent earlier time out. The transport
+  steps (KVO works). An SL2 with 810 files took 34.1 s after power-on, but a new process right after
+  found the catalog done in 0.05 s (2026-11-19); with 10 files it takes 0.04–0.44 s. There is no
+  public ImageCaptureCore option to skip the catalog (`ICEnumerationChronologicalOrder` is the only
+  session option). Commands sent earlier time out. The transport
   waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded at 60 s, cancellable) and
   reports it as `PTPPreparation.indexingStorage`; the engine shows `.preparing(.readingStorage)`
   and swaps the 10 s connect deadline for `preparationTimeout` (90 s) meanwhile, so a cold start

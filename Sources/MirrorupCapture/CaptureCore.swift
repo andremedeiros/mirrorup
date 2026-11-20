@@ -105,6 +105,9 @@ final class CaptureCore: Sendable {
                     Diagnostics.capture.fault("Capture failed: \(error.description, privacy: .public)")
                 case .idle:
                     Diagnostics.capture.info("Capture cancelled by the backend: \(error.description, privacy: .public)")
+                case .waitingForCamera:
+                    // No usable camera attached: not a failure, so no attempt and no recovery timer.
+                    Diagnostics.capture.debug("No camera to connect to: \(error.description, privacy: .public)")
                 default: // skipped frame; the session continues
                     state.lastRecoverableError = error
                     state.metrics.recordInvalidFrame()

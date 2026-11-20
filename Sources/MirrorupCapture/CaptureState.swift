@@ -87,6 +87,11 @@ public struct CaptureConfiguration: Sendable {
     /// attempt times out. Replaces `operationTimeout` while the camera prepares; once it is done,
     /// the rest of the connect gets a fresh `operationTimeout`.
     public var preparationTimeout: Duration
+    /// While no usable camera is attached (`.waitingForCamera`), discovery runs again when a camera
+    /// appears (`CameraArrivals`) or after this long, whichever comes first. The interval covers
+    /// transports that report no arrivals, and attached cameras that become usable without
+    /// reappearing.
+    public var cameraRecheckInterval: Duration
 
     public init(
         output: VideoFormat = .virtualCamera,
@@ -94,18 +99,20 @@ public struct CaptureConfiguration: Sendable {
         recovery: RecoveryPolicy = .init(),
         stallTimeout: Duration = .seconds(5),
         operationTimeout: Duration = .seconds(10),
-        preparationTimeout: Duration = .seconds(90)
+        preparationTimeout: Duration = .seconds(90),
+        cameraRecheckInterval: Duration = .seconds(5)
     ) {
         precondition(output.width > 0 && output.height > 0 && output.width % 2 == 0 && output.height % 2 == 0,
                      "Output dimensions must be positive and even")
-        precondition(stallTimeout > .zero && operationTimeout > .zero && preparationTimeout > .zero,
-                     "Timeouts must be positive")
+        precondition(stallTimeout > .zero && operationTimeout > .zero && preparationTimeout > .zero
+                     && cameraRecheckInterval > .zero, "Timeouts must be positive")
         self.output = output
         self.pixelFormat = pixelFormat
         self.recovery = recovery
         self.stallTimeout = stallTimeout
         self.operationTimeout = operationTimeout
         self.preparationTimeout = preparationTimeout
+        self.cameraRecheckInterval = cameraRecheckInterval
     }
 }
 
@@ -149,6 +156,10 @@ public enum CaptureState: Sendable, Equatable {
     case idle
     /// Creating the backend (finding the camera).
     case discovering
+    /// No camera to connect to: none attached, or none Mirrorup can use (`reason` says which, as a
+    /// user-facing sentence). Not a failure: no attempt is counted and there is no backoff;
+    /// discovery runs again as soon as a camera appears, or after `cameraRecheckInterval`.
+    case waitingForCamera(reason: String)
     case connecting
     /// Connecting, but the camera is busy and cannot take commands yet (no failure: the connect
     /// deadline is `preparationTimeout` meanwhile). Back to `.connecting` when it is done.
@@ -210,7 +221,7 @@ enum CaptureEvent: Sendable, Equatable {
     case liveViewStarted
     case framePublished
     case failed(CameraError)
-    /// Backoff elapsed; try again.
+    /// Backoff elapsed, or a camera may have appeared; try again.
     case retry
     case stop
 }
@@ -253,6 +264,8 @@ struct CaptureStateMachine: Sendable, Equatable {
 
         case (.discovering, .backendCreated):
             return (.connecting, false)
+        case (.discovering, .failed(let error)) where error.kind == .notFound:
+            return (.waitingForCamera(reason: error.message), false)
         case (.connecting, .preparing(let preparation)), (.preparing, .preparing(let preparation)):
             return (.preparing(preparation), false)
         case (.preparing, .preparationFinished):
@@ -269,7 +282,7 @@ struct CaptureStateMachine: Sendable, Equatable {
         case (.streaming, .framePublished):
             return (.streaming, false)
 
-        case (.recovering, .retry):
+        case (.recovering, .retry), (.waitingForCamera, .retry):
             return (.discovering, false)
 
         case (.discovering, .failed(let error)), (.connecting, .failed(let error)), (.preparing, .failed(let error)),

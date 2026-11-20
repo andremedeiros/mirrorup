@@ -200,6 +200,13 @@ private struct PreviewPlaceholder: View {
                 if let reason {
                     Text(reason).font(.caption).multilineTextAlignment(.center)
                 }
+            case .waitingForCamera(let reason):
+                Image(systemName: "camera").font(.title)
+                Text("Waiting for the camera")
+                Text(reason)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             case .unavailable(let message):
                 Image(systemName: "exclamationmark.triangle").font(.title)
                 Text(message).font(.callout).multilineTextAlignment(.center)
@@ -340,6 +347,7 @@ private extension AppModel.Phase {
         case .preparing(let preparation): preparation.summary
         case .live: "Streaming"
         case .reconnecting: "Reconnecting…"
+        case .waitingForCamera: "Waiting for the camera"
         case .unavailable: "Camera unavailable"
         }
     }

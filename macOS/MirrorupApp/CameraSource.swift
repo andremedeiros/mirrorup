@@ -16,4 +16,8 @@ enum CameraSource: String, CaseIterable, Identifiable, Sendable {
         case .testPattern: SyntheticCamera()
         }
     }
+
+    /// When cameras appear on the transport `.camera` discovers on, so the engine waits for one
+    /// instead of polling (`CaptureEngine(arrivals:)`). The test pattern never waits.
+    static var arrivals: (any CameraArrivals)? { CameraDiscovery.arrivals(on: .imageCapture) }
 }
