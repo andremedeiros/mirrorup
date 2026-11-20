@@ -388,6 +388,9 @@ struct CaptureEngineTests {
         let status = try await waitForStatus(engine, "streaming") { $0.state == .streaming }
         #expect(status.reconnectCount == 0 && status.metrics.recoveryAttempts == 0)
         #expect(await camera.connectAttempts == 1)
+        // The recorder reads the status stream asynchronously; on a loaded CI runner it can still be
+        // behind the polled status, so wait for it to see `.streaming` too.
+        try await waitUntil("streaming observed") { recorder.observed.last == .streaming }
         let observed = recorder.observed
         #expect(observed.contains { if case .preparing = $0 { true } else { false } })
         #expect(!observed.contains { if case .recovering = $0 { true } else { false } })
