@@ -436,3 +436,39 @@ struct FramePauseTests {
         await engine.stop()
     }
 }
+
+/// A synthetic camera that records each camera-screen request and whether live view was running.
+private actor ScreenSharingCamera: CameraBackend, CameraScreenSharing {
+    let camera = SyntheticCamera(configuration: syntheticConfiguration())
+    private(set) var requests: [(shows: Bool, duringLiveView: Bool)] = []
+
+    var identity: CameraIdentity { camera.identity }
+    func connect() async throws(CameraError) { try await camera.connect() }
+    func startLiveView() async throws(CameraError) { try await camera.startLiveView() }
+    func nextFrame() async throws(CameraError) -> CameraFrame { try await camera.nextFrame() }
+    func stopLiveView() async throws(CameraError) { try await camera.stopLiveView() }
+    func disconnect() async { await camera.disconnect() }
+    func metadata() async -> CameraMetadata { await camera.metadata() }
+    func setShowsLiveViewOnCamera(_ shows: Bool) async {
+        requests.append((shows, await camera.isLiveViewActive))
+    }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct CameraScreenTests {
+    @Test func preferenceIsAppliedBeforeLiveViewAndOnChangeWhileStreaming() async throws {
+        let camera = ScreenSharingCamera()
+        let engine = CaptureEngine(configuration: testConfiguration()) { camera }
+        engine.setShowsLiveViewOnCamera(true)
+        #expect(!engine.canShowLiveViewOnCamera)
+        await engine.start()
+        _ = try #require(await withTimeout(.seconds(10)) { await engine.frames.next(after: 0) })
+        #expect(engine.canShowLiveViewOnCamera)
+        engine.setShowsLiveViewOnCamera(false)
+        try await waitUntil("change applied while streaming") { await camera.requests.count == 2 }
+        await engine.stop()
+        let requests = await camera.requests
+        #expect(requests.map(\.shows) == [true, false])
+        #expect(requests.map(\.duringLiveView) == [false, true])
+    }
+}

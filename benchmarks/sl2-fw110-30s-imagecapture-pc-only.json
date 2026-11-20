@@ -1,0 +1,57 @@
+{
+  "acquisitionMs" : {
+    "count" : 898,
+    "max" : 38.309041,
+    "mean" : 8.333301134743866,
+    "min" : 5.0255,
+    "p50" : 7.151,
+    "p95" : 16.358791,
+    "p99" : 22.8315
+  },
+  "cameraFPS" : 29.892883584548045,
+  "cameraScreen" : false,
+  "captureToDecodedMs" : {
+    "count" : 898,
+    "max" : 147.5635,
+    "mean" : 5.2228266347438765,
+    "min" : 2.782708,
+    "p50" : 4.651125,
+    "p95" : 8.589583,
+    "p99" : 15.003458
+  },
+  "cpuPercentOfOneCore" : 7.719087907807955,
+  "decodeMs" : {
+    "count" : 898,
+    "max" : 147.429458,
+    "mean" : 5.064112383073499,
+    "min" : 2.743916,
+    "p50" : 4.4735,
+    "p95" : 8.078333,
+    "p99" : 14.13225
+  },
+  "durationSeconds" : 30.007141916000002,
+  "enhanced" : false,
+  "errors" : [
+
+  ],
+  "frames" : 898,
+  "interFrameMs" : {
+    "count" : 897,
+    "max" : 157.878958,
+    "mean" : 33.44335907357862,
+    "min" : 8.09825,
+    "p50" : 33.298333,
+    "p95" : 40.822458,
+    "p99" : 53.720458
+  },
+  "invalidFrames" : 0,
+  "meanFrameBytes" : 154262,
+  "model" : "Canon EOS Rebel SL2",
+  "notReadyResponses" : 2304,
+  "peakFootprintMB" : 7.672584533691406,
+  "sourceHeight" : 640,
+  "sourceWidth" : 960,
+  "timeToFirstFrameMs" : 946.373542,
+  "transport" : "ImageCaptureCore",
+  "viewfinderRequests" : 3202
+}

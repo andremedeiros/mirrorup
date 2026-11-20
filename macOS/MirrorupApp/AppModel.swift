@@ -27,6 +27,7 @@ final class AppModel {
         static let mirrored = "mirrored"
         static let upsideDown = "upsideDown"
         static let enhance = "enhanceDetail"
+        static let showsLiveViewOnCamera = "showLiveViewOnCamera"
         /// Launch argument (`-MirrorupAfterExtensionUpgrade YES`) of the instance started by
         /// `relaunchAfterExtensionUpgrade`.
         static let afterExtensionUpgrade = "MirrorupAfterExtensionUpgrade"
@@ -117,6 +118,18 @@ final class AppModel {
 
     let isEnhanceSupported = CaptureEngine.isEnhanceSupported
 
+    /// Keep the picture on the camera's own screen while streaming. Persisted; offered only when the
+    /// connected camera can (`canShowLiveViewOnCamera`). Off by default: the screen costs battery.
+    var showsLiveViewOnCamera: Bool {
+        didSet {
+            engine.setShowsLiveViewOnCamera(showsLiveViewOnCamera)
+            UserDefaults.standard.set(showsLiveViewOnCamera, forKey: Keys.showsLiveViewOnCamera)
+        }
+    }
+
+    /// Whether the connected camera can keep live view on its own screen; read with the controls.
+    private(set) var canShowLiveViewOnCamera = false
+
     /// Registered with launchd as a login item (System Settings › General › Login Items).
     var opensAtLogin: Bool {
         get { loginItemStatus == .enabled }
@@ -152,6 +165,7 @@ final class AppModel {
         mirrored = defaults.bool(forKey: Keys.mirrored)
         upsideDown = defaults.bool(forKey: Keys.upsideDown)
         enhance = defaults.bool(forKey: Keys.enhance)
+        showsLiveViewOnCamera = defaults.bool(forKey: Keys.showsLiveViewOnCamera)
         cameraAccess = AVCaptureDevice.authorizationStatus(for: .video)
         let box = OSAllocatedUnfairLock(initialState: source)
         sourceBox = box
@@ -162,6 +176,7 @@ final class AppModel {
         })
         applyOrientation()
         engine.setEnhance(enhance)
+        engine.setShowsLiveViewOnCamera(showsLiveViewOnCamera)
         extensionManager.isDeviceMissing = { [weak self] in self?.sinkState == .deviceNotFound }
         extensionManager.onReplaced = { [weak self] in self?.relaunchAfterExtensionUpgrade() }
         if defaults.bool(forKey: Keys.afterExtensionUpgrade) {
@@ -350,6 +365,7 @@ final class AppModel {
 
     func refreshControls() async {
         controlState = await engine.controls()?.controlState()
+        canShowLiveViewOnCamera = engine.canShowLiveViewOnCamera
     }
 
     func set(_ setting: CameraSetting, to option: CameraSettingOption) {
@@ -685,7 +701,10 @@ final class AppModel {
         }
         isVirtualCameraAvailable = sinkState == .connected
         updateNotice()
-        if newPhase != .live { controlState = nil }
+        if newPhase != .live {
+            controlState = nil
+            canShowLiveViewOnCamera = false
+        }
         if newPhase == .live && !wasLive {
             // A failure from the previous connection says nothing about this one.
             controlMessage = nil

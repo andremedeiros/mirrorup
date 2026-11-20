@@ -1,0 +1,16 @@
+benchmarking Canon EOS Rebel SL2 via ImageCaptureCore for 30.0 seconds (decode: on, enhance: off, camera screen: on)
+     10s     298 frames   29.8 fps  acq p50 7.4 ms
+     20s     598 frames   29.9 fps  acq p50 7.4 ms
+
+camera              Canon EOS Rebel SL2 via ImageCaptureCore
+source frames       960x640 JPEG, mean 160 KiB
+streamed            30.0 s, 897 frames, 29.86 fps measured
+first frame         1058 ms after live view start
+viewfinder polls    3095 (2198 not ready, 71%), 0 invalid payloads
+acquisition         n=897 min=5.73 p50=7.59 p95=14.92 p99=22.14 max=27.10 mean=8.72 ms
+inter-frame         n=896 min=9.21 p50=33.37 p95=40.27 p99=50.61 max=190.07 mean=33.48 ms
+decode+scale        n=897 min=3.00 p50=4.50 p95=8.80 p99=14.60 max=179.46 mean=5.21 ms
+capture->decoded    n=897 min=3.06 p50=4.63 p95=9.01 p99=14.77 max=179.58 mean=5.38 ms
+CPU                 7.9% of one core (whole process)
+memory              7.9 MB peak physical footprint
+wrote benchmarks/sl2-fw110-30s-imagecapture-camera-screen.json

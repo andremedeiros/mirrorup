@@ -44,6 +44,13 @@ struct CameraControlsView: View {
                             .help("Magnify the camera image. While zoomed, click the preview to move the zoomed area.")
                         }
                     }
+                    if model.canShowLiveViewOnCamera {
+                        GridRow {
+                            RowLabel("Live View")
+                            Toggle("Show on Camera Screen", isOn: $model.showsLiveViewOnCamera)
+                                .help("Keep the picture on the camera's screen while streaming. Uses more battery.")
+                        }
+                    }
                 // App-side, so usable while a camera command runs.
                 GridRow {
                     RowLabel("Image")

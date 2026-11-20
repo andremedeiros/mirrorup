@@ -114,4 +114,17 @@ public actor CaptureEngine {
     }
 
     public nonisolated static var isEnhanceSupported: Bool { FrameDecoder.isEnhanceSupported }
+
+    /// Keeps live view on the camera's own screen while streaming, where the camera can
+    /// (`canShowLiveViewOnCamera`). Applied before live view starts and, while streaming, before the
+    /// next frame. Safe from any thread; persists across `stop()`/`start()`.
+    public nonisolated func setShowsLiveViewOnCamera(_ shows: Bool) {
+        core.showsLiveViewOnCamera = shows
+    }
+
+    /// Whether the current session's camera can keep live view on its own screen; false when no
+    /// camera is connected.
+    public nonisolated var canShowLiveViewOnCamera: Bool {
+        core.backend is any CameraScreenSharing
+    }
 }

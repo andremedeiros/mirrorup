@@ -32,6 +32,7 @@ final class CaptureCore: Sendable {
     /// Separate from `state` so the per-frame read never contends with status updates. Survives runs.
     private let orientationState = Mutex(FrameOrientation.normal)
     private let enhanceState = Mutex(false)
+    private let cameraScreenState = Mutex(false)
     private let frames: LatestFrameBuffer
 
     init(frames: LatestFrameBuffer) {
@@ -52,6 +53,12 @@ final class CaptureCore: Sendable {
     var orientation: FrameOrientation {
         get { orientationState.withLock { $0 } }
         set { orientationState.withLock { $0 = newValue } }
+    }
+
+    /// Whether the camera keeps live view on its own screen; the capture loop applies it.
+    var showsLiveViewOnCamera: Bool {
+        get { cameraScreenState.withLock { $0 } }
+        set { cameraScreenState.withLock { $0 = newValue } }
     }
 
     /// Begins a new run (idle/failed -> discovering) and returns its generation.

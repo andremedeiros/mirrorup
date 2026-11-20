@@ -122,6 +122,11 @@ so they interleave safely with streaming.
   sizes it rejects, frames use plain scaling. Toggled with `CaptureEngine.setEnhance`.
 - Mirror and upside down are app-side (`CaptureEngine.setOrientation`), applied after decoding with
   `VTPixelRotationSession`, and skipped entirely when off.
+- Show on Camera Screen (opt-in) keeps live view on the camera's own screen while it streams.
+  `CameraScreenSharing` is the backend capability; `CaptureEngine.setShowsLiveViewOnCamera` stores
+  the preference, and the capture loop is its only writer to the camera: before `startLiveView`, and
+  before the next frame when it changes. The app offers it when `canShowLiveViewOnCamera` is true.
+  `CanonCamera` writes `0xD1B0` = 3 (rear LCD + PC) instead of 2.
 
 ## Capture state machine
 

@@ -98,6 +98,11 @@ libgphoto2 sets up a regular EOS DSLR in two places:
   keeps the TFT bit. **Ref(`config.c`:`_get_Canon_LiveViewSize` / `_put_Canon_LiveViewSize`)**.
   Whether `0x4` or `0x8` gives a smaller JPEG on the SL2: **Hyp**.
 - With value `2` (PC only) the SL2 produced 960×640 JPEG frames. **Verified**
+- With value `3` (rear LCD + PC) the SL2 keeps live view on its rear LCD and streams the same
+  960×640 JPEGs to the PC (power switch ON, firmware 1.1.0, 2026-11-19). 30 s each, same scene:
+  29.86 vs 29.89 fps, acquisition p50 7.59 vs 7.15 ms, first frame 1058 vs 946 ms, 71% vs 72% not-ready
+  polls (`benchmarks/sl2-fw110-30s-imagecapture-camera-screen.*` vs `…-pc-only.*`). Mirrorup writes
+  it when the user turns on Show on Camera Screen. **Verified**
 
 ### 3.2 How libgphoto2 starts preview
 
@@ -395,9 +400,11 @@ The steps use the ImageCaptureCore pass-through; the ptpcamerad session is alrea
 
 ### 9.2 Live view start
 
-1. Save `savedOutput = cache[0xD1B0]`. If `(savedOutput & ~0x1) == 0`, send **`0x9110`
-   `[12][0xD1B0][2]`** (PC only, rear LCD off). Fatal unless `0x2001`. (**Verified** value 2;
-   libgphoto2 uses the same rule: **Ref**)
+1. Save `savedOutput = cache[0xD1B0]`. The wanted value is `2` (PC only, rear LCD off), or `3`
+   (rear LCD + PC) when the user turned on Show on Camera Screen. If `savedOutput & 0x3` differs from
+   it, send **`0x9110` `[12][0xD1B0][wanted]`**. Fatal unless `0x2001`, except that a refused `3`
+   falls back to `2`. (**Verified** values 2 and 3 on the SL2, §3.1; libgphoto2 writes 2 when
+   `(savedOutput & ~0x1) == 0`: **Ref**)
 2. If `cache[0xD1B1]` exists and is not 1, send `0x9110` `[12][0xD1B1][1]` and treat `0x2019` as
    success. Remember to restore it. (**Ref**; the SL2 likely does not need it: **Hyp**)
 3. Do **not** send InitiateViewfinder `0x9151` unless step 9.1.1 found it in OperationsSupported.
@@ -420,7 +427,7 @@ loop:
       if notReadyStreak exceeds about 3 s worth of tries: treat live view as lost and re-arm (9.2)
   else: fail (see errors)
   every ~250 ms: drain GetEvent; apply 0xC189 to cache; act per section 5.1
-      (0xD1B0 lost bit 1 -> rewrite 2; 0xC18D/0xC18E -> 0x911D now)
+      (0xD1B0 lost bit 1 -> rewrite the wanted value, 2 or 3; 0xC18D/0xC18E -> 0x911D now)
   every 10 s, if 0x911D is listed: KeepDeviceOn 0x911D (ignore 0x2005)
 ```
 
