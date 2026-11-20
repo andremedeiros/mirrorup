@@ -13,6 +13,10 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
         /// Live view is considered lost if no frame arrives for this long (covers the mirror-up delay
         /// before the first frame, ~1.2 s on similar bodies).
         public var frameTimeout: Duration = .seconds(3)
+        /// Before the first frame, how often live view is re-armed when the body drops PC output. Right
+        /// after power-on the SL2 drops it about 250 ms after each write until it has settled (twice in
+        /// a row on 2026-11-19, docs/canon-eos-ptp.md §9.2); each re-arm restarts the first-frame wait.
+        public var startupRearmLimit = 8
         /// How often GetEvent is drained while streaming.
         public var eventPollInterval: Duration = .milliseconds(250)
         /// KeepDeviceOn cadence (only if the camera lists 0x911D).
@@ -55,6 +59,11 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
     private var rearmedSinceLastFrame = false
     /// The user's choice to keep live view on the rear LCD while it streams to the PC.
     private var showsLiveViewOnCamera = false
+    /// Re-arms before this session's first frame (`Options.startupRearmLimit`).
+    private var startupRearms = 0
+    /// Set when the body echoes EVFOutputDevice with the PC bit after our latest write: a later drop
+    /// means it is settling, not ignoring the write.
+    private var pcEchoedSinceWrite = false
     /// Typed metadata and JPEG of the latest live-view frame. Kept as parsed (no formatting) so the
     /// capture path stays cheap; `metadata()` formats it when someone asks.
     private(set) var latestFrame: CanonViewfinderFrame?
@@ -173,9 +182,13 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
     // MARK: Connection
 
     public func connect() async throws(CameraError) {
+        try await connect(progress: { _ in })
+    }
+
+    public func connect(progress: @escaping @Sendable (CameraPreparation?) -> Void) async throws(CameraError) {
         guard case .disconnected = state else { return }
         do {
-            try await session.open()
+            try await session.open(preparation: { progress($0.map(CameraPreparation.init(ptp:))) })
             let info = try await session.deviceInfo()
             deviceInfo = info
             try Self.validate(info)
@@ -276,6 +289,8 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
             try await drainEvents()
             state = .liveView(savedOutput: savedOutput, savedEVFMode: savedMode == 0 ? 0 : nil)
             sequence = 0
+            rearmedSinceLastFrame = false
+            startupRearms = 0
             lastFrameTime = .now
             lastEventPoll = .now
             Diagnostics.canon.info("live view armed (saved EVFOutputDevice=0x\(String(savedOutput, radix: 16), privacy: .public))")
@@ -394,14 +409,25 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
         if now - lastEventPoll >= options.eventPollInterval {
             lastEventPoll = now
             try await drainEvents()
-            // The user can kick the body out of PC live view (menu, playback, mode dial).
-            // Re-arm once per frame drought: a body that is powering down keeps reporting 0 and must
-            // be left to the frame timeout, not rewritten on every event poll.
-            if case .liveView = state, !rearmedSinceLastFrame,
+            // The user can kick the body out of PC live view (menu, playback, mode dial). Re-arm once
+            // per frame drought: a body that is powering down keeps reporting 0 and must be left to
+            // the frame timeout, not rewritten on every event poll. Before the first frame, a body that
+            // echoed PC output and then dropped it is still settling after power-on: keep re-arming
+            // (bounded) and give each attempt the full first-frame wait. A body that never echoes the
+            // write (a 7D in movie mode, docs §12) gets the single re-arm.
+            if case .liveView = state,
                let output = properties[CanonProperty.evfOutputDevice]?.integer, output & CanonProperty.evfOutputPC == 0 {
-                Diagnostics.canon.notice("camera left PC live view (EVFOutputDevice=0x\(String(output, radix: 16), privacy: .public)); re-arming")
-                rearmedSinceLastFrame = true
-                try await applyLiveViewOutput()
+                let settling = sequence == 0 && pcEchoedSinceWrite && startupRearms < options.startupRearmLimit
+                if settling || !rearmedSinceLastFrame {
+                    let attempt = settling ? " (settling before the first frame, \(startupRearms + 1) of \(options.startupRearmLimit))" : ""
+                    Diagnostics.canon.notice("camera left PC live view (EVFOutputDevice=0x\(String(output, radix: 16), privacy: .public)); re-arming\(attempt, privacy: .public)")
+                    rearmedSinceLastFrame = true
+                    if settling {
+                        startupRearms += 1
+                        lastFrameTime = .now
+                    }
+                    try await applyLiveViewOutput()
+                }
             }
         }
         if let info = deviceInfo, info.supports(CanonOperation.keepDeviceOn),
@@ -416,6 +442,7 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
     }
 
     private func setEVFOutput(_ value: UInt32) async throws(PTPError) {
+        pcEchoedSinceWrite = false
         try await session.execute(
             PTPCommand(CanonOperation.setDevicePropValueEx),
             dataOut: CanonPropertyEncoding.integerPayload(property: CanonProperty.evfOutputDevice, value: value),
@@ -463,6 +490,8 @@ public actor CanonCamera: CameraBackend, LiveViewPolling, RawPayloadRecording, C
                 switch event {
                 case .willSoonShutdown, .shutdownTimerUpdated:
                     keepAliveRequested = true
+                case .propertyChanged(CanonProperty.evfOutputDevice, .integer(let output)) where output & CanonProperty.evfOutputPC != 0:
+                    pcEchoedSinceWrite = true
                 case .cameraStatusChanged(let status):
                     Diagnostics.canon.debug("camera status \(status)")
                 case .objectAdded(let object), .objectTransferRequested(let object):

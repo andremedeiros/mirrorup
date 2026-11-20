@@ -20,6 +20,8 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     private let state = Mutex(State())
     private let openTimeout: Duration
     private let readyTimeout: Duration
+    /// How long a catalog wait must last before it is reported (`PTPPreparationReporter`).
+    private let preparationGrace: Duration
 
     private struct State {
         var phase: Phase = .closed
@@ -72,10 +74,12 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     }
 
     @MainActor
-    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10), readyTimeout: Duration = .seconds(60)) {
+    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10), readyTimeout: Duration = .seconds(60),
+                preparationGrace: Duration = .seconds(1)) {
         self.camera = camera
         self.openTimeout = openTimeout
         self.readyTimeout = readyTimeout
+        self.preparationGrace = preparationGrace
         delegate = CameraDelegate()
         camera.delegate = delegate
     }
@@ -85,11 +89,19 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     /// Waits for the complete catalog, bounded by `readyTimeout` and by cancellation (the capture
     /// engine's connect deadline stays in charge); either way it carries on and lets the command
     /// deadlines decide. Returns how long it waited and whether the catalog completed.
-    private func waitForContentCatalog() async -> (waited: Duration, complete: Bool) {
+    ///
+    /// While it waits it reports `.indexingStorage` through `preparation` (with
+    /// `contentCatalogPercentCompleted`, observed), then `nil` when the wait ends however it ends.
+    /// A wait that ends within `preparationGrace` reports nothing: right after `requestOpenSession`
+    /// the catalog can look incomplete for a few milliseconds even on a warm start.
+    private func waitForContentCatalog(
+        preparation: @escaping PTPPreparationHandler
+    ) async -> (waited: Duration, complete: Bool) {
         let start = ContinuousClock.now
         let timeout = readyTimeout
         let camera = UncheckedBox(camera)
         let wait = CatalogWait()
+        let reporter = PTPPreparationReporter(grace: preparationGrace, handler: preparation)
         let timer = Task {
             do { try await Task.sleep(for: timeout) } catch { return }
             wait.finish(false)
@@ -98,8 +110,13 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         Task { @MainActor in
             if delegate.isReady || camera.value.contentCatalogPercentCompleted >= 100 {
                 wait.finish(true)
-            } else {
+            } else if !reporter.isFinished {
+                // `isFinished`: the wait may already be over (cancelled) by the time this runs.
+                reporter.report(.indexingStorage(percentComplete: Self.clampedPercent(camera.value.contentCatalogPercentCompleted)))
                 delegate.onReady = { wait.finish(true) }
+                delegate.catalogObservation = camera.value.observe(\.contentCatalogPercentCompleted) { device, _ in
+                    reporter.report(.indexingStorage(percentComplete: Self.clampedPercent(device.contentCatalogPercentCompleted)))
+                }
             }
         }
         let complete = await withTaskCancellationHandler {
@@ -107,9 +124,15 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         } onCancel: {
             wait.finish(false)
         }
-        await MainActor.run { delegate.onReady = nil }
+        reporter.finish()
+        await MainActor.run {
+            delegate.onReady = nil
+            delegate.catalogObservation = nil
+        }
         return (ContinuousClock.now - start, complete)
     }
+
+    private static func clampedPercent(_ percent: Int) -> Int { min(max(percent, 0), 100) }
 
     /// One-shot result for `waitForContentCatalog`; the first `finish` wins, before or after `install`.
     private final class CatalogWait: Sendable {
@@ -146,6 +169,10 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     }
 
     public func open() async throws(PTPTransportError) {
+        try await open(preparation: { _ in })
+    }
+
+    public func open(preparation: @escaping PTPPreparationHandler) async throws(PTPTransportError) {
         let result: Result<Void, PTPTransportError> = await withCheckedContinuation { cont in
             let once = Mutex<CheckedContinuation<Result<Void, PTPTransportError>, Never>?>(cont)
             let finish: @Sendable (Result<Void, PTPTransportError>) -> Void = { r in
@@ -178,8 +205,15 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
             $0.phase = .open
             $0.removalToken = token
         }
-        let (waited, complete) = await waitForContentCatalog()
+        let (waited, complete) = await waitForContentCatalog(preparation: preparation)
         if case .failed(let error) = state.withLock({ $0.phase }) { throw error }
+        if Task.isCancelled {
+            // Stopped while waiting (e.g. the app quit during the catalog): not "continuing". Close
+            // here so a caller that never got an open transport has nothing to clean up.
+            Diagnostics.imageCapture.info("ImageCaptureCore content catalog wait cancelled after \(waited, privacy: .public)")
+            await close()
+            throw .cancelled
+        }
         if complete {
             Diagnostics.imageCapture.info("ImageCaptureCore session open on \(self.cameraNameForLogs, privacy: .public) (content catalog ready after \(waited, privacy: .public))")
         } else {
@@ -324,6 +358,8 @@ final class CameraDelegate: NSObject, ICCameraDeviceDelegate {
     /// Set once ImageCaptureCore reports the content catalog complete for this session.
     private(set) var isReady = false
     var onReady: (@MainActor () -> Void)?
+    /// Observes `contentCatalogPercentCompleted` while a catalog wait is in progress.
+    var catalogObservation: NSKeyValueObservation?
 
     nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
         MainActor.assumeIsolated { onSessionClosed?() }

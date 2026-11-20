@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import MirrorupPTP
 
@@ -140,6 +141,27 @@ import Testing
 }
 
 @Suite struct PTPSessionTests {
+    @Test func openForwardsTheTransportsPreparationReports() async throws {
+        let transport = PreparingTransport(reports: [
+            .indexingStorage(percentComplete: 0), .indexingStorage(percentComplete: 50), nil,
+        ])
+        let received = Mutex<[PTPPreparation?]>([])
+        let session = PTPSession(transport: transport)
+        try await session.open(preparation: { report in received.withLock { $0.append(report) } })
+        #expect(received.withLock { $0 } == transport.reports)
+        #expect(await session.opened)
+    }
+
+    @Test func transportsWithoutPreparationOpenThroughTheDefault() async throws {
+        let transport = OverlapDetectingTransport()
+        let received = Mutex(0)
+        try await transport.open(preparation: { _ in received.withLock { $0 += 1 } })
+        let session = PTPSession(transport: transport)
+        try await session.open(preparation: { _ in received.withLock { $0 += 1 } })
+        #expect(received.withLock { $0 } == 0)
+        #expect(await session.opened)
+    }
+
     @Test func opensWithTransactionZeroThenNumbersFromOne() async throws {
         let pipe = ScriptedPipe(reads: [
             .success(Bytes.response(tid: 0)),
@@ -244,5 +266,22 @@ final class OverlapDetectingTransport: PTPTransport, @unchecked Sendable {
         try? await Task.sleep(for: delay)
         lock.withLock { inFlight -= 1 }
         return PTPTransactionResult(response: PTPResponse(code: .ok, transactionID: transactionID), data: Data())
+    }
+}
+
+/// Transport fake that reports `reports` while it opens.
+final class PreparingTransport: PTPTransport, Sendable {
+    let sessionOwnership = PTPSessionOwnership.system
+    let reports: [PTPPreparation?]
+
+    init(reports: [PTPPreparation?]) { self.reports = reports }
+
+    func open() async throws(PTPTransportError) {}
+    func open(preparation: @escaping PTPPreparationHandler) async throws(PTPTransportError) {
+        for report in reports { preparation(report) }
+    }
+    func close() async {}
+    func execute(_ command: PTPCommand, transactionID: UInt32, dataOut: Data?, timeout: Duration) async throws(PTPError) -> PTPTransactionResult {
+        PTPTransactionResult(response: PTPResponse(code: .ok, transactionID: transactionID), data: Data())
     }
 }

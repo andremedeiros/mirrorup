@@ -45,6 +45,10 @@ public struct NikonDriver: CameraDriver {
   and let `connect()` refuse bodies without live view with `CameraError(.unsupported, …)` naming
   the model: `.unsupported` stops the engine instead of reconnecting forever.
 - `makeBackend` must not connect; the engine calls `connect()` inside its deadlines.
+- PTP drivers implement `connect(progress:)` and open the session with
+  `session.open(preparation: { progress($0.map(CameraPreparation.init(ptp:))) })`, so a camera
+  whose card is still being catalogued shows "Reading the camera's memory card…" and gets
+  `preparationTimeout` instead of failing the connect deadline (see `CanonCamera.connect`).
 - `DiscoveredCamera.openPTPSession()` works on both transports (ImageCaptureCore pass-through,
   the default, and direct IOUSBHost) and already maps "interface in use" and "access denied".
 

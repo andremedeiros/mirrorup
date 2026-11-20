@@ -135,11 +135,18 @@ stateDiagram-v2
     [*] --> idle
     idle --> discovering: start()
     discovering --> connecting: backend created
+    discovering --> waitingForCamera: no usable camera attached
+    waitingForCamera --> discovering: camera appeared / cameraRecheckInterval
+    connecting --> preparing: camera busy (e.g. card being read)
+    preparing --> preparing: progress
+    preparing --> connecting: preparation finished
+    preparing --> initializing: connected
     connecting --> initializing: connected
     initializing --> ready: live view armed
     ready --> streaming: first frame published
-    discovering --> recovering: failure
+    discovering --> recovering: other failure
     connecting --> recovering: failure
+    preparing --> recovering: failure / preparationTimeout
     initializing --> recovering: failure
     ready --> recovering: failure
     streaming --> recovering: disconnect / timeout / stall / protocol error
@@ -150,7 +157,23 @@ stateDiagram-v2
     idle --> idle: stop()
     streaming --> idle: stop()
     recovering --> idle: stop()
+    waitingForCamera --> idle: stop()
 ```
+
+`preparing` is not a failure: a backend reports it through `connect(progress:)` while the camera
+cannot take commands yet (ImageCaptureCore's content catalog on a cold attach), and the connect
+deadline becomes `preparationTimeout`, counted from the first report, until it reports `nil`; the
+rest of the connect then gets a fresh `operationTimeout`. Waits shorter than a second are never
+reported (`PTPPreparationReporter`), so a fast catalog doesn't flash the state.
+
+`waitingForCamera` is not a failure either: when discovery finds no camera a driver can use
+(`CameraError.notFound`), the engine counts no attempt and backs off no further. It waits for
+`CameraArrivals` (ImageCaptureCore's device-added callback, `CameraDiscovery.arrivals(on:)`) and
+discovers again the moment any camera appears, or after `cameraRecheckInterval` (5 s) for
+transports without arrival events and for attached cameras that become usable in place. The arrival
+count is read before each discovery, so a camera that appears while discovery gives up isn't missed.
+A camera that drops mid-stream still goes through `recovering` first; the wait that follows keeps
+its attempt count, so its return completes the recovery.
 
 Every transition goes through `CaptureStateMachine.handle(_:)`, a pure value-type reducer with a
 test per transition. There are no ad-hoc flags. Each engine run has a generation number, so late

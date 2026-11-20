@@ -94,10 +94,26 @@ open /Applications/Mirrorup.app --args -MirrorupSnapshotPopover /tmp/popover.png
 - A camera can be on USB but not in ImageCaptureCore: the SL2 stayed that way for minutes after a
   USB dropout (until power-cycled). Switching the SL2 off with its power switch removes it from USB
   entirely (2026-11-17).
-- ptpcamerad answers PTP pass-through only after cataloguing the card. On a cold attach a 7D with
-  479 files took 10–24 s after `requestOpenSession`; commands sent earlier time out. The transport
-  waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded, cancellable, so the
-  engine's 10 s connect deadline still wins; the app reconnects until the catalog is done).
+- ptpcamerad answers PTP pass-through only after cataloguing the card. A 7D with 479 files took
+  10–24 s after `requestOpenSession`, and not only on a cold attach: every new process pays it
+  again (23.8 s, 23.9 s on an attached, powered 7D), while later sessions in the same process are
+  ready at once. `contentCatalogPercentCompleted` sits at 0 for ~9.5 s, then counts 1→100 in ~150 ms
+  steps (KVO works). An SL2 with 810 files took 34.1 s after power-on, but a new process right after
+  found the catalog done in 0.05 s (2026-11-19); with 10 files it takes 0.04–0.44 s. There is no
+  public ImageCaptureCore option to skip the catalog (`ICEnumerationChronologicalOrder` is the only
+  session option). Commands sent earlier time out. The transport
+  waits for `deviceDidBecomeReady(withCompleteContentCatalog:)` (bounded at 60 s, cancellable) and
+  reports it as `PTPPreparation.indexingStorage`; the engine shows `.preparing(.readingStorage)`
+  and swaps the 10 s connect deadline for `preparationTimeout` (90 s) meanwhile, so a cold start
+  connects in one session instead of timing out and reconnecting. Waits shorter than 1 s are not
+  reported (`PTPPreparationReporter` grace): the catalog looks incomplete for a few ms right after
+  the session opens even on a warm start, and an SL2's small card took 0.43 s. Every surface that shows this
+  wait (popover, CLI, docs) also shows `CameraPreparation.explanation`: users read "memory card"
+  as the app reading their photos, and Mirrorup copies none (only a Take Photo shot).
+- Right after power-on the SL2 echoes `0xD1B0` = 2, then drops it back to 0 ~250 ms later, for each
+  write until it has settled (four writes, 1.8 s, on 2026-11-19); no event marks the end. One re-arm
+  is not enough: before the first frame the driver re-arms on every drop (bounded, only after an
+  echo), each with a fresh first-frame wait.
 - A cancelled pass-through request must not fail the session: a capture stop lands during a
   frame poll often (3 of 5 stops on a 7D), and teardown still has to restore `0xD1B0` and leave remote mode.
 - System extensions activate only from `/Applications`, and the user must approve them in

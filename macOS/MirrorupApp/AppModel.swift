@@ -171,7 +171,7 @@ final class AppModel {
         sourceBox = box
         // One engine for the app's lifetime; the source is read each time a backend is needed, so a
         // source change is just stop + start.
-        engine = CaptureEngine(makeBackend: { () async throws(CameraError) -> any CameraBackend in
+        engine = CaptureEngine(arrivals: CameraSource.arrivals, makeBackend: { () async throws(CameraError) -> any CameraBackend in
             try await box.withLock { $0 }.makeBackend()
         })
         applyOrientation()
@@ -588,8 +588,12 @@ final class AppModel {
     enum Phase: Equatable {
         case off
         case connecting
+        /// The camera is busy before it can stream (e.g. its memory card is being read).
+        case preparing(CameraPreparation)
         case live
         case reconnecting(reason: String?)
+        /// No usable camera is attached; `reason` says what to do. Nothing is wrong with Mirrorup.
+        case waitingForCamera(reason: String)
         case unavailable(message: String)
     }
 
@@ -680,10 +684,20 @@ final class AppModel {
                 newPhase = .unavailable(message: error.message)
             case .recovering:
                 newPhase = .reconnecting(reason: status.lastRecoverableError?.message)
+            case .waitingForCamera(let reason):
+                newPhase = .waitingForCamera(reason: reason)
+            case .preparing(let preparation):
+                // Even during a recovery: it can take 20 s, and nothing is wrong meanwhile.
+                newPhase = .preparing(preparation)
             case .idle, .discovering, .connecting, .initializing, .ready:
-                // Stay "reconnecting" through the intermediate states of a recovery so the UI
-                // doesn't flicker; a fresh start shows "connecting".
-                if case .reconnecting = phase { newPhase = phase } else { newPhase = .connecting }
+                // Stay "reconnecting" through the intermediate states of a recovery, and "waiting"
+                // through the re-checks while no camera is attached, so the UI doesn't flicker; a
+                // fresh start, or a camera that appeared, shows "connecting".
+                switch phase {
+                case .reconnecting: newPhase = phase
+                case .waitingForCamera where status.state == .discovering: newPhase = phase
+                default: newPhase = .connecting
+                }
             }
         }
         let wasLive = phase == .live
@@ -719,7 +733,7 @@ final class AppModel {
         case .off: .stopped
         case .live: sinkState == .connected ? .streamingToVirtualCamera : .streaming
         case .unavailable: .failed
-        case .connecting, .reconnecting: .working
+        case .connecting, .preparing, .reconnecting, .waitingForCamera: .working
         }
     }
 }

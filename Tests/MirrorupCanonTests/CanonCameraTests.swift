@@ -25,6 +25,9 @@ final class SimulatedSL2: PTPTransport, Sendable {
         var refusals: [UInt16: UInt16] = [:]
         /// When false, SetDevicePropValueEx is acknowledged but never echoed.
         var echoesPropertyWrites = true
+        /// The next N writes that turn PC output on are echoed, then dropped again (0xD1B0 back to
+        /// 0), as an SL2 does for a second or two after power-on.
+        var dropsPCOutput = 0
         var storageIDs: [UInt32] = [0x0002_0001]
         /// First response parameter of a RemoteReleaseOn full press (0 = released).
         var releaseResult: UInt32 = 0
@@ -102,6 +105,13 @@ final class SimulatedSL2: PTPTransport, Sendable {
                 w.u32(16); w.u32(0xC189); w.u32(prop); w.u32(value)
                 w.u32(8); w.u32(0)
                 s.pendingEvents.append(w.data)
+                if prop == 0xD1B0, value & 2 != 0, s.dropsPCOutput > 0 {
+                    s.dropsPCOutput -= 1
+                    s.evfOutput = 0
+                    var drop = PTPDataWriter()
+                    drop.u32(16); drop.u32(0xC189); drop.u32(0xD1B0); drop.u32(0); drop.u32(8); drop.u32(0)
+                    s.pendingEvents.append(drop.data)
+                }
             }
             return ok()
         case 0x9153:
@@ -294,6 +304,54 @@ private func makeCamera(options: CanonCamera.Options = .init()) throws -> (Canon
         } catch {
             #expect(error.kind == .timeout)
         }
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2])
+    }
+
+    /// Observed on the SL2 right after power-on (docs/canon-eos-ptp.md §9.2): the body echoes each
+    /// 0xD1B0 write, then drops PC output again until it has settled (four writes on 2026-11-19).
+    /// Before the first frame, live view is re-armed until a write sticks.
+    @Test func bodySettlingAfterPowerOnIsReArmedUntilLiveViewSticks() async throws {
+        var options = CanonCamera.Options()
+        options.eventPollInterval = .zero
+        let (camera, sim) = try makeCamera(options: options)
+        sim.state.withLock { $0.dropsPCOutput = 3 }
+        try await camera.connect()
+        try await camera.startLiveView()
+        _ = try await camera.nextFrame()
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2, 2, 2])
+    }
+
+    @Test func reArmsBeforeTheFirstFrameAreBounded() async throws {
+        var options = CanonCamera.Options()
+        options.eventPollInterval = .zero
+        options.frameTimeout = .milliseconds(200)
+        options.startupRearmLimit = 3
+        let (camera, sim) = try makeCamera(options: options)
+        sim.state.withLock { $0.dropsPCOutput = .max }
+        try await camera.connect()
+        try await camera.startLiveView()
+        // Gives up once the re-arms run out (the fixture body is in movie mode, so the error names it).
+        await #expect(throws: CameraError.self) { _ = try await camera.nextFrame() }
+        #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2, 2, 2])
+    }
+
+    /// A body that never echoes the write (a 7D in movie mode) is not "settling": one re-arm, and the
+    /// first-frame wait is not extended, so the movie-mode message arrives on time.
+    @Test func bodyIgnoringTheWriteIsReArmedOnceBeforeTheFirstFrame() async throws {
+        var options = CanonCamera.Options()
+        options.eventPollInterval = .zero
+        options.frameTimeout = .milliseconds(200)
+        let (camera, sim) = try makeCamera(options: options)
+        try await camera.connect()
+        sim.state.withLock { s in
+            s.echoesPropertyWrites = false
+            s.neverReady = true
+        }
+        try await camera.startLiveView()
+        let start = ContinuousClock.now
+        await #expect(throws: CameraError.self) { _ = try await camera.nextFrame() }
+        #expect(ContinuousClock.now - start < .seconds(1))
+        // One re-arm, writing the user's routing (PC only by default), not the cached idle value | PC.
         #expect(sim.state.withLock { $0.propertyWrites.map(\.1) } == [2, 2])
     }
 

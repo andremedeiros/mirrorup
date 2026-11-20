@@ -68,6 +68,7 @@ struct DiagnosticsView: View {
         guard model.wantsStreaming else { return "Stopped" }
         return switch state {
         case let .recovering(attempt, reason): "Reconnecting (attempt \(attempt)): \(reason)"
+        case let .waitingForCamera(reason): "Waiting for the camera: \(reason)"
         case let .failed(error): "Failed: \(error.message)"
         default: UserFacingText.headline(for: state)
         }

@@ -52,6 +52,20 @@ public actor SyntheticCamera: CameraBackend {
         }
     }
 
+    /// A camera that is busy before it can talk, like one whose memory card is being indexed on a
+    /// cold attach. Connect attempts report `.readingStorage` progress in `steps` even steps over
+    /// `duration`, then `nil`, until one preparation has completed.
+    public struct Preparation: Sendable, Equatable {
+        public var duration: Duration
+        public var steps: Int
+
+        public init(duration: Duration, steps: Int = 4) {
+            precondition(duration >= .zero && steps >= 1)
+            self.duration = duration
+            self.steps = steps
+        }
+    }
+
     public struct Configuration: Sendable, Equatable {
         public var width: Int
         public var height: Int
@@ -62,8 +76,9 @@ public actor SyntheticCamera: CameraBackend {
         public var jitter: Duration
         /// Delay before the first frame of each live-view session.
         public var firstFrameDelay: Duration
-        /// Time `connect()` takes.
+        /// Time `connect()` takes (after any `preparation`).
         public var connectDelay: Duration
+        public var preparation: Preparation?
         /// Time `disconnect()` takes (a slow USB session close).
         public var disconnectDelay: Duration
         public var stall: Stall?
@@ -81,7 +96,8 @@ public actor SyntheticCamera: CameraBackend {
         public init(
             width: Int = 960, height: Int = 640, frameRate: Int = 30,
             acquisitionDelay: Duration = .zero, jitter: Duration = .zero, firstFrameDelay: Duration = .zero,
-            connectDelay: Duration = .zero, disconnectDelay: Duration = .zero, stall: Stall? = nil,
+            connectDelay: Duration = .zero, preparation: Preparation? = nil,
+            disconnectDelay: Duration = .zero, stall: Stall? = nil,
             connectFailures: Int = 0, connectFailureProbability: Double = 0, connectFailureKind: CameraError.Kind = .notFound,
             removal: Removal? = nil, invalidFrames: InvalidFrames? = nil,
             ringSize: Int = 8, seed: UInt64 = 0x5EED
@@ -95,6 +111,7 @@ public actor SyntheticCamera: CameraBackend {
             self.jitter = jitter
             self.firstFrameDelay = firstFrameDelay
             self.connectDelay = connectDelay
+            self.preparation = preparation
             self.disconnectDelay = disconnectDelay
             self.stall = stall
             self.connectFailures = connectFailures
@@ -126,6 +143,8 @@ public actor SyntheticCamera: CameraBackend {
     private var pendingWait: Task<Void, any Error>?
 
     public private(set) var connectAttempts = 0
+    /// Whether a `preparation` has run to completion.
+    public private(set) var isPrepared = false
     public private(set) var connectCount = 0
     public private(set) var disconnectCount = 0
     /// `nextFrame` calls so far, across sessions (successful or not).
@@ -194,9 +213,23 @@ public actor SyntheticCamera: CameraBackend {
     // MARK: CameraBackend
 
     public func connect() async throws(CameraError) {
+        try await connect(progress: { _ in })
+    }
+
+    public func connect(progress: @escaping @Sendable (CameraPreparation?) -> Void) async throws(CameraError) {
         _ = try jpegs.get() // surfaces a test-pattern encoding failure
         connectAttempts += 1
         let attempt = connectAttempts
+        if let preparation = configuration.preparation, !isPrepared, session == .disconnected {
+            let step = preparation.duration / preparation.steps
+            let start = ContinuousClock.now
+            for index in 0..<preparation.steps {
+                progress(.readingStorage(percentComplete: 100 * index / preparation.steps))
+                try await wait(until: start + step * (index + 1), epoch: epoch)
+            }
+            isPrepared = true
+            progress(nil)
+        }
         if configuration.connectDelay > .zero {
             try await wait(until: .now + configuration.connectDelay, epoch: epoch)
         }

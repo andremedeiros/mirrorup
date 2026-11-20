@@ -36,3 +36,13 @@ extension CameraError {
         }
     }
 }
+
+extension CameraPreparation {
+    /// The engine's view of a PTP transport's preparation report, shared by every PTP driver.
+    public init(ptp preparation: PTPPreparation) {
+        switch preparation {
+        case .indexingStorage(let percent):
+            self = .readingStorage(percentComplete: percent)
+        }
+    }
+}

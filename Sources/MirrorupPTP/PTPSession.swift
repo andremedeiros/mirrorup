@@ -82,9 +82,14 @@ public actor PTPSession {
 
     /// Opens the transport and, when the host owns the session, sends OpenSession.
     public func open() async throws(PTPError) {
+        try await open(preparation: { _ in })
+    }
+
+    /// `open()`, forwarding the transport's preparation reports (see `PTPTransport.open(preparation:)`).
+    public func open(preparation: @escaping PTPPreparationHandler) async throws(PTPError) {
         guard !isOpen else { return }
         do {
-            try await transport.open()
+            try await transport.open(preparation: preparation)
         } catch {
             throw .transport(error)
         }

@@ -90,7 +90,8 @@ streaming switch, the camera's current lens and exposure, and camera controls:
   Screen**: keeps the picture on the camera's own screen while streaming (off by default; it uses
   more of the camera's battery).
 - **Battery** level and **Take Photo**: a full-resolution photo, saved to Pictures › Mirrorup (it
-  also stays on the camera's card).
+  also stays on the camera's card). That photo is the only file Mirrorup ever copies from the
+  camera; it doesn't read, copy or upload anything else on the card.
 
 Controls show only what the camera allows in its current mode and follow the mode dial live. The
 green Scene Intelligent Auto mode allows only the focus mode; P adds brightness, white balance,
@@ -121,7 +122,8 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 
 | Symptom | Fix |
 |---|---|
-| "No camera found" | Turn the camera on and check the cable. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
+| "Waiting for the camera" / "No camera found" | Turn the camera on and check the cable; Mirrorup connects the moment the camera appears, nothing to click. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
+| "The camera is getting ready…" for up to about half a minute | Nothing is wrong: before any app can use the camera, macOS lists every file on its memory card. It does this each time Mirrorup starts, and it takes longer the more photos the card holds (24 s for 479 files on an EOS 7D). Mirrorup doesn't copy or upload your photos; the CLI prints the same notice. |
 | "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it, usually after a USB dropout left it stuck. Turn it off and on again. |
 | "The camera's USB connection dropped … times" | The cable, adapter or port is dropping the connection (macOS logs `hardware connection lost`). Try another cable, or plug the camera straight into the Mac. |
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |

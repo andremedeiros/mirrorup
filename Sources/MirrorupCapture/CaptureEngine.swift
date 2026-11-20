@@ -1,13 +1,15 @@
 import MirrorupDiagnostics
 
 /// Owns the capture pipeline: one capture loop at a time pulls frames from a `CameraBackend`,
-/// decodes them and publishes them to `frames`, recovering from failures with backoff.
+/// decodes them and publishes them to `frames`, recovering from failures with backoff, and waiting
+/// for a camera (without backoff) while none is attached.
 public actor CaptureEngine {
     /// Newest decoded frame; consumers pull from here at their own pace.
     public nonisolated let frames: LatestFrameBuffer
 
     private let configuration: CaptureConfiguration
     private let makeBackend: @Sendable () async throws(CameraError) -> any CameraBackend
+    private let arrivals: (any CameraArrivals)?
     private nonisolated let core: CaptureCore
     /// The loop started by the latest `start()`, until `stop()` cancels it.
     private var running: Task<Void, Never>?
@@ -15,11 +17,16 @@ public actor CaptureEngine {
     /// `start()` can wait for it (two loops must never talk to the camera at once).
     private var lastLoop: Task<Void, Never>?
 
+    /// - Parameter arrivals: when cameras appear on the transport `makeBackend` discovers on; nil
+    ///   when it can't tell, and the engine then re-checks every `cameraRecheckInterval` while it
+    ///   waits for a camera.
     public init(
         configuration: CaptureConfiguration = .init(),
+        arrivals: (any CameraArrivals)? = nil,
         makeBackend: @escaping @Sendable () async throws(CameraError) -> any CameraBackend
     ) {
         self.configuration = configuration
+        self.arrivals = arrivals
         self.makeBackend = makeBackend
         let frames = LatestFrameBuffer()
         self.frames = frames
@@ -36,7 +43,8 @@ public actor CaptureEngine {
         if running != nil, core.isActive { return }
         let generation = core.beginRun(maxAttemptsBeforeFailing: configuration.recovery.maxAttemptsBeforeFailing)
         let loop = CaptureLoop(
-            configuration: configuration, makeBackend: makeBackend, core: core, frames: frames, generation: generation
+            configuration: configuration, makeBackend: makeBackend, arrivals: arrivals, core: core, frames: frames,
+            generation: generation
         )
         let previous = lastLoop
         let task = Task {
