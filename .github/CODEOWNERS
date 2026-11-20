@@ -1,0 +1,7 @@
+# Files that decide what runs in the release build, next to the signing keys: changes need André's review
+# (the "Protect main" ruleset requires code-owner review).
+/.github/                @andremedeiros
+/Makefile                @andremedeiros
+/Package.swift           @andremedeiros
+/macOS/project.yml       @andremedeiros
+/macOS/*.sh              @andremedeiros

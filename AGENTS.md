@@ -20,8 +20,8 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 | `Tools/MirrorupCLI` | `mirrorup` CLI | all |
 | `macOS/` | SwiftUI menu-bar app + CoreMediaIO Camera Extension. `project.yml` (XcodeGen) is the only project definition; the `.xcodeproj`, Info.plists and entitlements are generated and untracked. `Shared/AppIcon.icon` (Icon Composer: SVG layers + `icon.json`, edit in Xcode's Icon Composer) is the icon of both targets; `docs/images/mirrorup-icon.png` is its 256 px render | package products |
 | `web/webcam-test.html` | Safari/WebRTC validation page | — |
-| `.github/workflows/release.yml` | Actions → Release → Run workflow (approved via the `release` environment) → test, Developer ID archive, notarize, Sparkle-signed appcast, Copilot-written notes, draft GitHub release (setup: `docs/development.md`) | — |
-| `.github/workflows/ci.yml` | every PR and push to `main` → `make build test` on the release runner | — |
+| `.github/workflows/release.yml` | Actions → Release → Run workflow → requires CI passed on the commit → approved via the `release` environment → Developer ID archive, notarize, Sparkle-signed appcast, Copilot-written notes, draft GitHub release (setup: `docs/development.md`) | — |
+| `.github/workflows/ci.yml` | every PR, push to `main` and manual run → `make build test` on the release runner; releases require it on their commit | — |
 
 ## Hard constraints
 
@@ -29,6 +29,9 @@ validated on the EOS Rebel SL2 / 200D). Read `docs/architecture.md` first; the d
 - No third-party dependencies, no libgphoto2/Rust/C transport code, no private Apple API. One
   exception: the app target links Sparkle (pinned in `macOS/project.yml`) for updates; the Swift
   package, the CLI and the Camera Extension stay dependency-free.
+- Release signing keys live only in the `release` environment. In `release.yml`, nothing from outside
+  this repository (Homebrew, npm, package resolution) runs after "Install signing certificate and
+  profile"; actions and Sparkle are pinned to commit hashes (Dependabot moves the action pins).
 - Vendor opcodes, wording and quirks stay in the driver module (`MirrorupCanon`, …); `MirrorupPTP`,
   `MirrorupCapture`, `MirrorupDevices`, the app and the CLI contain no vendor logic and no vendor
   wording shown to users (doc comments may cite makers as examples). Backends phrase
