@@ -38,12 +38,11 @@ Canon's EOS Webcam Utility is unreliable and laggy. Mirrorup is built around the
 |---|---|
 | USB discovery, descriptor inspection | ✅ verified on hardware |
 | PTP session and GetDeviceInfo (ImageCaptureCore transport) | ✅ verified on hardware |
-| Direct IOUSBHost transport | ⚠️ implemented and unit-tested; blocked while macOS's `ptpcamerad` owns the interface (always, in a normal session). See [docs/usb-feasibility.md](docs/usb-feasibility.md) |
 | Canon live view, snapshot, benchmark | ✅ verified: **29.96 fps for 10 minutes, 0 invalid frames, 6.9% CPU, 10.6 MB** |
 | Capture engine, recovery from unplug and power-off | ✅ verified on hardware (stream back 0.8–1.1 s after the camera reappears) |
 | Menu-bar app (capture, preview, diagnostics) | ✅ runs and streams on hardware |
 | Camera Extension | ✅ activates and streams on macOS 27.2 (unmanaged Mac). MDM policies that forbid unlisted system extensions block it |
-| Video app validation | ✅ Photo Booth, FaceTime; ⏳ QuickTime / Safari not tested yet |
+| Video app validation | ✅ Photo Booth, FaceTime, QuickTime, Safari (WebRTC) |
 
 ### Cameras
 
@@ -123,7 +122,7 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
 | Symptom | Fix |
 |---|---|
 | "Waiting for the camera" / "No camera found" | Turn the camera on and check the cable; Mirrorup connects the moment the camera appears, nothing to click. `mirrorup devices` shows what Mirrorup sees and which driver claims it. |
-| "The camera is getting ready…" for up to about half a minute | Nothing is wrong: before any app can use the camera, macOS lists every file on its memory card. It does this each time Mirrorup starts, and it takes longer the more photos the card holds (24 s for 479 files on an EOS 7D). Mirrorup doesn't copy or upload your photos; the CLI prints the same notice. |
+| "The camera is getting ready…" for up to about half a minute | Nothing is wrong: before any app can use the camera, macOS lists every file on its memory card. It does this after the camera is switched on (on some bodies, like the EOS 7D, each time Mirrorup starts), and it takes longer the more photos the card holds: 34 s for 810 files on an SL2, 24 s for 479 on a 7D, under half a second for 10. Mirrorup doesn't copy or upload your photos; the CLI prints the same notice. |
 | "… is connected but not responding" | The camera is on USB but macOS's Image Capture doesn't list it, usually after a USB dropout left it stuck. Turn it off and on again. |
 | "The camera's USB connection dropped … times" | The cable, adapter or port is dropping the connection (macOS logs `hardware connection lost`). Try another cable, or plug the camera straight into the Mac. |
 | "Mirrorup doesn't support … yet" | The camera was found but no driver supports it. See [docs/adding-a-camera.md](docs/adding-a-camera.md). |
@@ -141,8 +140,10 @@ mirrorup liveview benchmark --duration 60          # measured FPS and timing dis
   fill it and centre-cropped. USB live view on the SL2 is ~30 fps; there is no 1080p over USB.
 - The SL2's 10× live-view zoom sends the same image as 5× over USB, so only 1× and 5× are offered.
 - Photo capture is verified for JPEG to the card; RAW and RAW+JPEG downloads are untested.
-- Direct USB access only works when no other process owns the PTP interface. Mirrorup never kills
-  system services to get it.
+- macOS's camera service lists the whole memory card before any app can talk to the camera, and
+  holds the camera's USB interface so no app can bypass it. There is no public way to skip the
+  listing, so a card with few photos gives the fastest start. Details and the options ruled out
+  (direct USB, DriverKit) are in [docs/usb-feasibility.md](docs/usb-feasibility.md).
 - Glass-to-glass latency has not been measured; see [docs/performance.md](docs/performance.md).
 - On macOS 27.2, replacing a running camera extension can leave it stopped until the Mac restarts
   (OBS has the same problem). The extension has its own version, so only updates that change it
