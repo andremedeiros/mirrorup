@@ -388,6 +388,9 @@ struct CaptureEngineTests {
         let status = try await waitForStatus(engine, "streaming") { $0.state == .streaming }
         #expect(status.reconnectCount == 0 && status.metrics.recoveryAttempts == 0)
         #expect(await camera.connectAttempts == 1)
+        // The recorder reads the status stream asynchronously; on a loaded CI runner it can still be
+        // behind the polled status, so wait for it to see `.streaming` too.
+        try await waitUntil("streaming observed") { recorder.observed.last == .streaming }
         let observed = recorder.observed
         #expect(observed.contains { if case .preparing = $0 { true } else { false } })
         #expect(!observed.contains { if case .recovering = $0 { true } else { false } })
@@ -463,7 +466,9 @@ struct CaptureEngineTests {
         deadline.preparationFinished()
         try await sleeper.value
         let waited = ContinuousClock.now - started
-        #expect(waited < .milliseconds(100) + ConnectDeadline.recheckInterval + .milliseconds(300), "waited \(waited)")
+        // The sleeper started with a 30 s deadline; waking within seconds proves it saw the earlier
+        // one. A bound near the 250 ms recheck interval flakes on a loaded CI runner (1.26 s seen).
+        #expect(waited < .seconds(5), "waited \(waited)")
     }
 
     @Test func deadlineCancelsTheLoser() async throws {

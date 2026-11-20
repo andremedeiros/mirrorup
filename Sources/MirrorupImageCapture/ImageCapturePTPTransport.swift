@@ -20,6 +20,8 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     private let state = Mutex(State())
     private let openTimeout: Duration
     private let readyTimeout: Duration
+    /// How long a catalog wait must last before it is reported (`PTPPreparationReporter`).
+    private let preparationGrace: Duration
 
     private struct State {
         var phase: Phase = .closed
@@ -72,10 +74,12 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     }
 
     @MainActor
-    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10), readyTimeout: Duration = .seconds(60)) {
+    public init(camera: ICCameraDevice, openTimeout: Duration = .seconds(10), readyTimeout: Duration = .seconds(60),
+                preparationGrace: Duration = .seconds(1)) {
         self.camera = camera
         self.openTimeout = openTimeout
         self.readyTimeout = readyTimeout
+        self.preparationGrace = preparationGrace
         delegate = CameraDelegate()
         camera.delegate = delegate
     }
@@ -88,7 +92,8 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
     ///
     /// While it waits it reports `.indexingStorage` through `preparation` (with
     /// `contentCatalogPercentCompleted`, observed), then `nil` when the wait ends however it ends.
-    /// When the catalog is already complete it reports nothing.
+    /// A wait that ends within `preparationGrace` reports nothing: right after `requestOpenSession`
+    /// the catalog can look incomplete for a few milliseconds even on a warm start.
     private func waitForContentCatalog(
         preparation: @escaping PTPPreparationHandler
     ) async -> (waited: Duration, complete: Bool) {
@@ -96,7 +101,7 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         let timeout = readyTimeout
         let camera = UncheckedBox(camera)
         let wait = CatalogWait()
-        let reporter = PreparationReporter(preparation)
+        let reporter = PTPPreparationReporter(grace: preparationGrace, handler: preparation)
         let timer = Task {
             do { try await Task.sleep(for: timeout) } catch { return }
             wait.finish(false)
@@ -107,10 +112,10 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
                 wait.finish(true)
             } else if !reporter.isFinished {
                 // `isFinished`: the wait may already be over (cancelled) by the time this runs.
-                reporter.report(percent: camera.value.contentCatalogPercentCompleted)
+                reporter.report(.indexingStorage(percentComplete: Self.clampedPercent(camera.value.contentCatalogPercentCompleted)))
                 delegate.onReady = { wait.finish(true) }
                 delegate.catalogObservation = camera.value.observe(\.contentCatalogPercentCompleted) { device, _ in
-                    reporter.report(percent: device.contentCatalogPercentCompleted)
+                    reporter.report(.indexingStorage(percentComplete: Self.clampedPercent(device.contentCatalogPercentCompleted)))
                 }
             }
         }
@@ -127,40 +132,7 @@ public final class ImageCapturePTPTransport: PTPTransport, @unchecked Sendable {
         return (ContinuousClock.now - start, complete)
     }
 
-    /// Forwards catalog progress to a preparation handler: only changes, nothing after `finish()`,
-    /// and the closing `nil` only if something was reported.
-    private final class PreparationReporter: Sendable {
-        private struct State {
-            var lastPercent: Int?
-            var reported = false
-            var finished = false
-        }
-        private let state = Mutex(State())
-        private let handler: PTPPreparationHandler
-
-        init(_ handler: @escaping PTPPreparationHandler) { self.handler = handler }
-
-        var isFinished: Bool { state.withLock { $0.finished } }
-
-        func report(percent: Int) {
-            let percent = min(max(percent, 0), 100)
-            let send = state.withLock { s -> Bool in
-                guard !s.finished, !s.reported || s.lastPercent != percent else { return false }
-                s.reported = true
-                s.lastPercent = percent
-                return true
-            }
-            if send { handler(.indexingStorage(percentComplete: percent)) }
-        }
-
-        func finish() {
-            let send = state.withLock { s -> Bool in
-                defer { s.finished = true }
-                return s.reported && !s.finished
-            }
-            if send { handler(nil) }
-        }
-    }
+    private static func clampedPercent(_ percent: Int) -> Int { min(max(percent, 0), 100) }
 
     /// One-shot result for `waitForContentCatalog`; the first `finish` wins, before or after `install`.
     private final class CatalogWait: Sendable {

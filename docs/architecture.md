@@ -155,7 +155,8 @@ stateDiagram-v2
 `preparing` is not a failure: a backend reports it through `connect(progress:)` while the camera
 cannot take commands yet (ImageCaptureCore's content catalog on a cold attach), and the connect
 deadline becomes `preparationTimeout`, counted from the first report, until it reports `nil`; the
-rest of the connect then gets a fresh `operationTimeout`.
+rest of the connect then gets a fresh `operationTimeout`. Waits shorter than a second are never
+reported (`PTPPreparationReporter`), so a fast catalog doesn't flash the state.
 
 Every transition goes through `CaptureStateMachine.handle(_:)`, a pure value-type reducer with a
 test per transition. There are no ad-hoc flags. Each engine run has a generation number, so late
